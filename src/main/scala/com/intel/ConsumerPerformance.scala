@@ -15,7 +15,7 @@ import java.text.SimpleDateFormat
 import java.util.concurrent.atomic.AtomicBoolean
 
 import kafka.tools.PerfConfig
-import kafka.utils.{CommandLineUtils, ToolsUtils}
+import kafka.utils.CommandLineUtils
 
 import scala.collection.mutable
 
