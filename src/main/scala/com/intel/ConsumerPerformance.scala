@@ -20,7 +20,7 @@ import kafka.utils.CommandLineUtils
 import scala.collection.mutable
 
 /**
-	* Performance test for the full zookeeper consumer
+	*Performance test for the full zookeeper consumer
 	*/
 object ConsumerPerformance {
 	private val logger = Logger.getLogger(getClass())
@@ -120,7 +120,6 @@ object ConsumerPerformance {
 				if ((endOffset - seekPosition) > 100) {
 					consumer.seek(tp, seekPosition)
 				}
-
 			}
 			val records = consumer.poll(100).asScala
 			currentTimeMillis = System.currentTimeMillis
@@ -147,8 +146,14 @@ object ConsumerPerformance {
 		totalBytesRead.set(bytesRead)
 	}
 
-	def printProgressMessage(id: Int, bytesRead: Long, lastBytesRead: Long, messagesRead: Long, lastMessagesRead: Long,
-													 startMs: Long, endMs: Long, dateFormat: SimpleDateFormat) = {
+	def printProgressMessage(id: Int,
+													 bytesRead: Long,
+													 lastBytesRead: Long,
+													 messagesRead: Long,
+													 lastMessagesRead: Long,
+													 startMs: Long,
+													 endMs: Long,
+													 dateFormat: SimpleDateFormat) = {
 		val elapsedMs: Double = endMs - startMs
 		val totalMBRead = (bytesRead * 1.0) / (1024 * 1024)
 		val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
@@ -226,7 +231,6 @@ object ConsumerPerformance {
 		props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer])
 		props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer])
 		props.put(ConsumerConfig.CHECK_CRCS_CONFIG, "false")
-
 
 		val numThreads = options.valueOf(numThreadsOpt).intValue
 		val topic = options.valueOf(topicOpt)
