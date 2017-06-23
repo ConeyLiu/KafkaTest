@@ -53,7 +53,7 @@ object Main {
 			if (offsetMap.nonEmpty) {
 				val random = new Random()
 				val randomOffset = rdd.partitions.map { p =>
-					val endOffset = random.nextInt(offsetMap.getOrElse(p.index, 0).toInt)
+					val endOffset = random.nextInt(offsetMap.getOrElse(p.index, 0L).toInt)
 					val startOffset = if ((endOffset - 100) > 0) {
 						endOffset - 100
 					} else {
@@ -76,7 +76,7 @@ object Main {
 			// update the offset
 			rdd.partitions.foreach { p =>
 				val offsetRange = offsetRanges(p.index)
-				if (offsetRange.untilOffset > offsetMap.getOrElse(p.index, 0)) {
+				if (offsetRange.untilOffset > offsetMap.getOrElse(p.index, 0L)) {
 					offsetMap.put(p.index, offsetRange.untilOffset)
 				}
 			}
