@@ -107,7 +107,7 @@ object ConsumerPerformance {
 		val partitionInfos = consumer.partitionsFor(oneTopic).asScala
 		val topicPartitions = partitionInfos.map(pi => new TopicPartition(oneTopic, pi.partition()))
 		val beginningOffsets = consumer.beginningOffsets(topicPartitions.asJava)
-		val endOffsets = consumer.endOffsets(topicPartitions.asJava)
+		var endOffsets = consumer.endOffsets(topicPartitions.asJava)
 
 		while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
 			val random = new Random(System.currentTimeMillis())
@@ -131,10 +131,21 @@ object ConsumerPerformance {
 					bytesRead += record.key.size
 				if (record.value != null)
 					bytesRead += record.value.size
-
+        
 				if (currentTimeMillis - lastReportTime >= config.reportingInterval) {
 					if (config.showDetailedStats)
-						printProgressMessage(0, bytesRead, lastBytesRead, messagesRead, lastMessagesRead, lastReportTime, currentTimeMillis, config.dateFormat)
+						printProgressMessage(
+							0,
+							bytesRead,
+							lastBytesRead,
+							messagesRead,
+							lastMessagesRead,
+							lastReportTime,
+							currentTimeMillis,
+							config.dateFormat)
+
+          // update endOffsets every *config.reportingInterval*
+          endOffsets = consumer.endOffsets(topicPartitions.asJava)
 					lastReportTime = currentTimeMillis
 					lastMessagesRead = messagesRead
 					lastBytesRead = bytesRead
