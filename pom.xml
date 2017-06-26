@@ -43,6 +43,14 @@
       <version>0.10.2.1</version>
     </dependency>
 
+    <!-- https://mvnrepository.com/artifact/net.sourceforge.argparse4j/argparse4j -->
+    <dependency>
+      <groupId>net.sourceforge.argparse4j</groupId>
+      <artifactId>argparse4j</artifactId>
+      <version>0.7.0</version>
+    </dependency>
+
+
   </dependencies>
 
   <build>
