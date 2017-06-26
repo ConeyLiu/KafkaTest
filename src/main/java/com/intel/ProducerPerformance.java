@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static net.sourceforge.argparse4j.impl.Arguments.store;
 import static net.sourceforge.argparse4j.impl.Arguments.storeTrue;
@@ -26,8 +28,9 @@ public class ProducerPerformance {
     try {
       Namespace res = parser.parseArgs(args);
 
-            /* parse args */
+      /* parse args */
       String topicName = res.getString("topic");
+      int numProducers = res.getInt("numProducers") == null ? 1 : res.getInt("numProducers");
       long numRecords = res.getLong("numRecords");
       Integer recordSize = res.getInt("recordSize");
       int throughput = res.getInt("throughput");
@@ -36,8 +39,10 @@ public class ProducerPerformance {
       String payloadFilePath = res.getString("payloadFile");
       boolean shouldPrintMetrics = res.getBoolean("printMetrics");
 
-      // since default value gets printed with the help text, we are escaping \n there and replacing it with correct value here.
-      String payloadDelimiter = res.getString("payloadDelimiter").equals("\\n") ? "\n" : res.getString("payloadDelimiter");
+      // since default value gets printed with the help text,
+      // we are escaping \n there and replacing it with correct value here.
+      String payloadDelimiter = res.getString("payloadDelimiter")
+                                  .equals("\\n") ? "\n" : res.getString("payloadDelimiter");
 
       if (producerProps == null && producerConfig == null) {
         throw new ArgumentParserException("Either --producer-props or --producer.config must be specified.", parser);
@@ -76,52 +81,28 @@ public class ProducerPerformance {
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       KafkaProducer<byte[], byte[]> producer = new KafkaProducer<byte[], byte[]>(props);
 
-            /* setup perf test */
-      byte[] payload = null;
-      Random random = new Random(0);
-      if (recordSize != null) {
-        payload = new byte[recordSize];
-        for (int i = 0; i < payload.length; ++i)
-          payload[i] = (byte) (random.nextInt(26) + 65);
-      }
-      ProducerRecord<byte[], byte[]> record;
-      Stats stats = new Stats(numRecords, 5000);
-      long startMs = System.currentTimeMillis();
 
-      ThroughputThrottler throttler = new ThroughputThrottler(throughput, startMs);
-      for (int i = 0; i < numRecords; i++) {
-        if (payloadFilePath != null) {
-          payload = payloadByteList.get(random.nextInt(payloadByteList.size()));
-        }
-        record = new ProducerRecord<>(topicName, payload);
+      ExecutorService executor = Executors.newFixedThreadPool(numProducers);
 
-        long sendStartMs = System.currentTimeMillis();
-        Callback cb = stats.nextCompletion(sendStartMs, payload.length, stats);
-        producer.send(record, cb);
 
-        if (throttler.shouldThrottle(i, sendStartMs)) {
-          throttler.throttle();
-        }
+
+      for (int i = 0; i < numProducers; i ++) {
+        Runnable runnable = getProducerThread(
+          i + "",
+          numRecords,
+          recordSize,
+          payloadFilePath,
+          topicName,
+          shouldPrintMetrics,
+          throughput,
+          payloadByteList,
+          producer
+        );
+        executor.submit(runnable);
       }
 
-      if (!shouldPrintMetrics) {
-        producer.close();
+      executor.shutdown();
 
-                /* print final results */
-        stats.printTotal();
-      } else {
-        // Make sure all messages are sent before printing out the stats and the metrics
-        // We need to do this in a different branch for now since tests/kafkatest/sanity_checks/test_performance_services.py
-        // expects this class to work with older versions of the client jar that don't support flush().
-        producer.flush();
-
-                /* print final results */
-        stats.printTotal();
-
-                /* print out metrics */
-        ToolsUtils.printMetrics(producer.metrics());
-        producer.close();
-      }
     } catch (ArgumentParserException e) {
       if (args.length == 0) {
         parser.printHelp();
@@ -132,6 +113,74 @@ public class ProducerPerformance {
       }
     }
 
+  }
+
+  private static Runnable getProducerThread(
+    String threadName,
+    long numRecords,
+    int recordSize,
+    String payloadFilePath,
+    String topicName,
+    Boolean shouldPrintMetrics,
+    int throughputLimit,
+    List<byte[]> payloadByteList,
+    KafkaProducer<byte[], byte[]> producer
+  ) {
+
+    Runnable producerThread = new Runnable() {
+      @Override
+      public void run() {
+
+        byte[] payload = null;
+        Random random = new Random(0);
+        if (payload != null) {
+          payload = new byte[recordSize];
+          for (int i = 0; i < payload.length; ++i)
+            payload[i] = (byte) (random.nextInt(26) + 65);
+        }
+
+        ProducerRecord<byte[], byte[]> record;
+        Stats stats = new Stats(threadName, numRecords, 5000);
+        long startMs = System.currentTimeMillis();
+
+        ThroughputThrottler throttler = new ThroughputThrottler(throughputLimit, startMs);
+        for (int i = 0; i < numRecords; i++) {
+          if (payloadFilePath != null) {
+            payload = payloadByteList.get(random.nextInt(payloadByteList.size()));
+          }
+          record = new ProducerRecord<>(topicName, payload);
+
+          long sendStartMs = System.currentTimeMillis();
+          Callback cb = stats.nextCompletion(sendStartMs, payload.length, stats);
+          producer.send(record, cb);
+
+          if (throttler.shouldThrottle(i, sendStartMs)) {
+            throttler.throttle();
+          }
+        }
+
+        if (!shouldPrintMetrics) {
+          producer.close();
+
+          //print final results
+          stats.printTotal();
+        } else {
+          // Make sure all messages are sent before printing out the stats and the metrics
+          // We need to do this in a different branch for now since tests/kafkatest/sanity_checks/test_performance_services.py
+          // expects this class to work with older versions of the client jar that don't support flush().
+          producer.flush();
+
+          //print final results
+          stats.printTotal();
+
+          //print out metrics
+          ToolsUtils.printMetrics(producer.metrics());
+          producer.close();
+        }
+      }
+    };
+
+    return producerThread;
   }
 
   /** Get the command-line argument parser. */
@@ -152,6 +201,14 @@ public class ProducerPerformance {
       .type(String.class)
       .metavar("TOPIC")
       .help("produce messages to this topic");
+
+    parser.addArgument("--num-producers")
+      .action(store())
+      .required(false)
+      .type(Integer.class)
+      .metavar("NUM-PRODUCERS")
+      .dest("numProducers")
+      .help("number of producers");
 
     parser.addArgument("--num-records")
       .action(store())
@@ -225,6 +282,7 @@ public class ProducerPerformance {
   }
 
   private static class Stats {
+    private String threadName;
     private long start;
     private long windowStart;
     private int[] latencies;
@@ -241,7 +299,8 @@ public class ProducerPerformance {
     private long windowBytes;
     private long reportingInterval;
 
-    public Stats(long numRecords, int reportingInterval) {
+    public Stats(String threadName, long numRecords, int reportingInterval) {
+      this.threadName = threadName;
       this.start = System.currentTimeMillis();
       this.windowStart = System.currentTimeMillis();
       this.index = 0;
@@ -286,9 +345,9 @@ public class ProducerPerformance {
     }
 
     public void printWindow() {
-      long ellapsed = System.currentTimeMillis() - windowStart;
-      double recsPerSec = 1000.0 * windowCount / (double) ellapsed;
-      double mbPerSec = 1000.0 * this.windowBytes / (double) ellapsed / (1024.0 * 1024.0);
+      long elapsed = System.currentTimeMillis() - windowStart;
+      double recsPerSec = 1000.0 * windowCount / (double) elapsed;
+      double mbPerSec = 1000.0 * this.windowBytes / (double) elapsed / (1024.0 * 1024.0);
       System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency, %.1f max latency.%n",
         windowCount,
         recsPerSec,
