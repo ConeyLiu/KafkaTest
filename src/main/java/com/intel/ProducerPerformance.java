@@ -88,7 +88,7 @@ public class ProducerPerformance {
 
       for (int i = 0; i < numProducers; i ++) {
         Runnable runnable = getProducerThread(
-          i + "",
+          "producer-" + i,
           numRecords,
           recordSize,
           payloadFilePath,

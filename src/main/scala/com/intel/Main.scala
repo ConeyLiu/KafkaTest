@@ -4,9 +4,12 @@ import java.util.Properties
 
 import scala.collection.JavaConverters._
 import org.apache.kafka.common.serialization.StringDeserializer
-import org.apache.spark.SparkConf
+import org.apache.spark.scheduler.SparkListener
+import org.apache.spark.{SparkConf, SparkEnv, TaskContext}
 import org.apache.spark.streaming.kafka010._
+import org.apache.spark.streaming.scheduler.StreamingListener
 import org.apache.spark.streaming.{Seconds, StreamingContext}
+import org.glassfish.jersey.server.monitoring.ApplicationEventListener
 
 import scala.collection.mutable
 import scala.util.Random
@@ -34,7 +37,6 @@ object Main {
 			"key.deserializer" -> classOf[StringDeserializer],
 			"value.deserializer" -> classOf[StringDeserializer],
 			"group.id" -> properties.getProperty("group.id"),
-			"auto.offset.reset" -> "latest",
 			"enable.auto.commit" -> (false: java.lang.Boolean)
 		)
 
@@ -46,6 +48,9 @@ object Main {
 			ConsumerStrategies.Subscribe[String, String](Array(topic), kafkaParams)
 		)
 
+
+    ssc.addStreamingListener(new StreamingListener {})
+
 		// map: partitionID -> maxEndOffSet
 		val offsetMap = new mutable.HashMap[Int, Long]()
 		kafkaData.foreachRDD { rdd =>
@@ -53,6 +58,12 @@ object Main {
 			if (offsetMap.nonEmpty) {
 				val random = new Random()
 				val randomOffset = rdd.partitions.map { p =>
+          // update the offset
+          val offsetRange = offsetRanges(p.index)
+          if (offsetRange.untilOffset > offsetMap.getOrElse(p.index, 0)) {
+            offsetMap.put(p.index, offsetRange.untilOffset)
+          }
+
 					val endOffset = random.nextInt(offsetMap.getOrElse(p.index, 0L).toInt)
 					val startOffset = if ((endOffset - 100) > 0) {
 						endOffset - 100
@@ -69,16 +80,12 @@ object Main {
 					LocationStrategies.PreferConsistent
 				).map(record => (record.key(), record.value()))
 
-				val kvRdd = rdd.map(record => (record.key(), record.value()))
-				randomRdd.join(kvRdd).count()
-			}
 
-			// update the offset
-			rdd.partitions.foreach { p =>
-				val offsetRange = offsetRanges(p.index)
-				if (offsetRange.untilOffset > offsetMap.getOrElse(p.index, 0L)) {
-					offsetMap.put(p.index, offsetRange.untilOffset)
-				}
+
+				val kvRdd = rdd.map(record => (record.key(), record.value()))
+				val unionRDD = randomRdd.union(kvRdd)
+        val count = unionRDD.count()
+        println("throughput: " + count / batchInterval)
 			}
 		}
 
