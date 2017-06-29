@@ -81,10 +81,8 @@ public class ProducerPerformance {
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       KafkaProducer<byte[], byte[]> producer = new KafkaProducer<byte[], byte[]>(props);
 
-
+      // thread pool for producer
       ExecutorService executor = Executors.newFixedThreadPool(numProducers);
-
-
 
       for (int i = 0; i < numProducers; i ++) {
         Runnable runnable = getProducerThread(

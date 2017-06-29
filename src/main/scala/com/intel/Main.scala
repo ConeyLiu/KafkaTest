@@ -3,7 +3,9 @@ package com.intel
 import java.io.{File, FileWriter, IOException}
 import java.util.{Date, Properties}
 
-import com.codahale.metrics.{Histogram, UniformReservoir}
+import com.codahale.metrics.{Histogram, MetricRegistry, UniformReservoir}
+
+import com.intel.MetricsUtil.{formatDouble, formatLong}
 
 import scala.collection.JavaConverters._
 import org.apache.kafka.common.serialization.StringDeserializer
@@ -46,7 +48,8 @@ object Main {
       assert(outputDir != null)
 
       // histogram metrics recorder
-      histogram = new Histogram(new UniformReservoir(properties.getProperty("sampleNumber").toInt))
+      val metrics = MetricsUtil.getMetrics
+      histogram = MetricsUtil.getHistogram("streaming-" + topic, metrics)
       assert(histogram != null)
 
       val kafkaData = KafkaUtils.createDirectStream[String, String](
@@ -64,7 +67,7 @@ object Main {
           val randomOffset = rdd.partitions.map { p =>
             // update the offset
             val offsetRange = offsetRanges(p.index)
-            if (offsetRange.untilOffset > offsetMap.getOrElse(p.index, 0)) {
+            if (offsetRange.untilOffset > offsetMap.getOrElse(p.index, 0L)) {
               offsetMap.put(p.index, offsetRange.untilOffset)
             }
 
@@ -107,53 +110,8 @@ object Main {
       }
     } finally {
       if (!occurError) {
-        report(outputDir, topic, histogram)
+        MetricsUtil.reportHistogram(outputDir, topic, histogram)
       }
     }
-
-
 	}
-
-  private def report(
-                    outputDir: String,
-                    metricsTopic: String,
-                    histogram: Histogram
-                    ): Unit = {
-    val outputFile = new File(outputDir, metricsTopic + ".csv")
-    println(s"written out metrics to ${outputFile.getCanonicalPath}")
-    val header = "time,count,throughput(r/s),mean_throughput(r/s),min_throughput(r/s)," +
-      "stddev_throughput(r/s),p50_throughput(r/s),p75_throughput(r/s),p95_throughput(r/s),p98_throughput(r/s)," +
-      "p99_throughput(r/s),p999_throughput(r/s)\n"
-    val fileExists = outputFile.exists()
-    if (!fileExists) {
-      val parent = outputFile.getParentFile
-      if (!parent.exists()) {
-        parent.mkdirs()
-      }
-      outputFile.createNewFile()
-    }
-    val outputFileWriter = new FileWriter(outputFile, true)
-    if (!fileExists) {
-      outputFileWriter.append(header)
-    }
-    val time = new Date(System.currentTimeMillis()).toString
-    val count = histogram.getCount
-    val snapshot = histogram.getSnapshot
-    outputFileWriter.append(s"$time,$count," +
-      s"${formatDouble(snapshot.getMax)}," +
-      s"${formatDouble(snapshot.getMean)}," +
-      s"${formatDouble(snapshot.getMin)}," +
-      s"${formatDouble(snapshot.getStdDev)}," +
-      s"${formatDouble(snapshot.getMedian)}," +
-      s"${formatDouble(snapshot.get75thPercentile())}," +
-      s"${formatDouble(snapshot.get95thPercentile())}," +
-      s"${formatDouble(snapshot.get98thPercentile())}," +
-      s"${formatDouble(snapshot.get99thPercentile())}," +
-      s"${formatDouble(snapshot.get999thPercentile())}\n")
-    outputFileWriter.close()
-  }
-
-  private def formatDouble(d: Double): String = {
-    "%.3f".format(d)
-  }
 }
