@@ -65,6 +65,52 @@ public class MetricsUtil {
 
   }
 
+  public static void reportProducerReport(
+    long count,
+    String outputDir,
+    String reportName,
+    Histogram recsPerSecMetrics,
+    Histogram mbPerSecMetrics,
+    Histogram lantencyMetrics
+  ) {
+    try {
+      File outputFile = new File(outputDir, reportName + ".csv");
+      System.out.println("written out metrics to " + outputFile.getCanonicalPath());
+      String header = "time,record count,min_ratio(records/sec),avg_ratio(records/sec),max_ratio(records/sec),"
+        + "min_ratio(MB/sec),avg_ratio(MB/sec),max_ratio(MB/sec),min_latency(ms),avg_latency(ms),max_latency(ms)\n";
+      boolean fileExists = outputFile.exists();
+      if (!fileExists) {
+        File parent = outputFile.getParentFile();
+        if (!parent.exists()) {
+          parent.mkdirs();
+        }
+        outputFile.createNewFile();
+      }
+      FileWriter outputFileWriter = new FileWriter(outputFile, true);
+      if (!fileExists) {
+        outputFileWriter.append(header);
+      }
+      String time = new Date(System.currentTimeMillis()).toString();
+      Snapshot recsPerSecSnapshot = recsPerSecMetrics.getSnapshot();
+      Snapshot mbPerSecSnapshot = mbPerSecMetrics.getSnapshot();
+      Snapshot latencySnapshot = lantencyMetrics.getSnapshot();
+      outputFileWriter.append(time  + ",")
+        .append(count + ",")
+        .append(formatLong(recsPerSecSnapshot.getMin()) + ",")
+        .append(formatDouble(recsPerSecSnapshot.getMean()) + ",")
+        .append(formatLong(recsPerSecSnapshot.getMax()) + ",")
+        .append(formatLong(mbPerSecSnapshot.getMin()) + ",")
+        .append(formatDouble(mbPerSecSnapshot.getMean()) + ",")
+        .append(formatLong(mbPerSecSnapshot.getMax()) + ",")
+        .append(formatLong(latencySnapshot.getMin()) + ",")
+        .append(formatDouble(latencySnapshot.getMean()) + ",")
+        .append(formatLong(latencySnapshot.getMax()) + "\n");
+      outputFileWriter.close();
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+  }
+
   public static Histogram getHistogram(String histogramName, MetricRegistry metriccs) {
     return metriccs.histogram(histogramName);
   }

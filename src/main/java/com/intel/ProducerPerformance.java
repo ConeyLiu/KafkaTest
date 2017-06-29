@@ -1,6 +1,8 @@
 package com.intel;
 
 
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.MetricRegistry;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
@@ -14,8 +16,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static net.sourceforge.argparse4j.impl.Arguments.store;
 import static net.sourceforge.argparse4j.impl.Arguments.storeTrue;
@@ -37,6 +41,7 @@ public class ProducerPerformance {
       List<String> producerProps = res.getList("producerConfig");
       String producerConfig = res.getString("producerConfigFile");
       String payloadFilePath = res.getString("payloadFile");
+      String outputDir = res.getString("outputDir");
       boolean shouldPrintMetrics = res.getBoolean("printMetrics");
 
       // since default value gets printed with the help text,
@@ -81,11 +86,17 @@ public class ProducerPerformance {
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       KafkaProducer<byte[], byte[]> producer = new KafkaProducer<byte[], byte[]>(props);
 
+      MetricRegistry metrics = MetricsUtil.getMetrics();
+      Histogram recordPerSecondMetrics = MetricsUtil.getHistogram("record_per_second", metrics);
+      Histogram sizePerSecondMetrics = MetricsUtil.getHistogram("size_per_second", metrics);
+      Histogram lantencyMetrics = MetricsUtil.getHistogram("lantency", metrics);
+
       // thread pool for producer
       ExecutorService executor = Executors.newFixedThreadPool(numProducers);
+      Future<Long>[] futures = new Future[numProducers];
 
       for (int i = 0; i < numProducers; i ++) {
-        Runnable runnable = getProducerThread(
+        Callable<Long> callable = getProducerThread(
           "producer-" + i,
           numRecords,
           recordSize,
@@ -94,12 +105,27 @@ public class ProducerPerformance {
           shouldPrintMetrics,
           throughput,
           payloadByteList,
-          producer
+          producer,
+          recordPerSecondMetrics,
+          sizePerSecondMetrics,
+          lantencyMetrics
         );
-        executor.submit(runnable);
+        futures[i] = executor.submit(callable);
       }
 
       executor.shutdown();
+
+      long totalRecord = 0L;
+      for (Future<Long> f : futures) {
+        totalRecord += f.get();
+      }
+      MetricsUtil.reportProducerReport(
+        totalRecord,
+        outputDir,
+        "producer_performance",
+        recordPerSecondMetrics,
+        sizePerSecondMetrics,
+        lantencyMetrics);
 
     } catch (ArgumentParserException e) {
       if (args.length == 0) {
@@ -113,7 +139,7 @@ public class ProducerPerformance {
 
   }
 
-  private static Runnable getProducerThread(
+  private static Callable<Long> getProducerThread(
     String threadName,
     long numRecords,
     int recordSize,
@@ -122,23 +148,31 @@ public class ProducerPerformance {
     Boolean shouldPrintMetrics,
     int throughputLimit,
     List<byte[]> payloadByteList,
-    KafkaProducer<byte[], byte[]> producer
+    KafkaProducer<byte[], byte[]> producer,
+    Histogram recsPerSecMetrics,
+    Histogram mbPerSecMetrics,
+    Histogram lantencyMetrics
   ) {
 
-    Runnable producerThread = new Runnable() {
-      @Override
-      public void run() {
+    Callable<Long> producerThread = new Callable<Long>() {
 
-        byte[] payload = null;
+      @Override
+      public Long call() throws Exception {
+        byte[] payload = new byte[recordSize];;
         Random random = new Random(0);
-        if (payload != null) {
-          payload = new byte[recordSize];
-          for (int i = 0; i < payload.length; ++i)
-            payload[i] = (byte) (random.nextInt(26) + 65);
+
+        for (int i = 0; i < payload.length; ++i) {
+          payload[i] = (byte) (random.nextInt(26) + 65);
         }
 
         ProducerRecord<byte[], byte[]> record;
-        Stats stats = new Stats(threadName, numRecords, 5000);
+        Stats stats = new Stats(
+          threadName,
+          numRecords,
+          5000,
+          recsPerSecMetrics,
+          mbPerSecMetrics,
+          lantencyMetrics);
         long startMs = System.currentTimeMillis();
 
         ThroughputThrottler throttler = new ThroughputThrottler(throughputLimit, startMs);
@@ -161,7 +195,7 @@ public class ProducerPerformance {
           producer.close();
 
           //print final results
-          stats.printTotal();
+          //stats.printTotal();
         } else {
           // Make sure all messages are sent before printing out the stats and the metrics
           // We need to do this in a different branch for now since tests/kafkatest/sanity_checks/test_performance_services.py
@@ -169,12 +203,13 @@ public class ProducerPerformance {
           producer.flush();
 
           //print final results
-          stats.printTotal();
+          //stats.printTotal();
 
           //print out metrics
           ToolsUtils.printMetrics(producer.metrics());
           producer.close();
         }
+        return stats.getCount();
       }
     };
 
@@ -269,6 +304,14 @@ public class ProducerPerformance {
       .dest("producerConfigFile")
       .help("producer config properties file.");
 
+    parser.addArgument("--output-dir")
+      .action(store())
+      .required(true)
+      .type(String.class)
+      .metavar("OUTPUT-DIR")
+      .dest("outputDir")
+      .help("the record output dir");
+
     parser.addArgument("--print-metrics")
       .action(storeTrue())
       .type(Boolean.class)
@@ -296,8 +339,16 @@ public class ProducerPerformance {
     private long windowTotalLatency;
     private long windowBytes;
     private long reportingInterval;
+    private Histogram recsPerSecMetrics;
+    private Histogram mbPerSecMetrics;
+    private Histogram lantencyMetrics;
 
-    public Stats(String threadName, long numRecords, int reportingInterval) {
+    public Stats(String threadName,
+                 long numRecords,
+                 int reportingInterval,
+                 Histogram recsPerSecMetrics,
+                 Histogram mbPerSecMetrics,
+                 Histogram lantencyMetrics) {
       this.threadName = threadName;
       this.start = System.currentTimeMillis();
       this.windowStart = System.currentTimeMillis();
@@ -314,6 +365,9 @@ public class ProducerPerformance {
       this.windowBytes = 0;
       this.totalLatency = 0;
       this.reportingInterval = reportingInterval;
+      this.recsPerSecMetrics = recsPerSecMetrics;
+      this.mbPerSecMetrics = mbPerSecMetrics;
+      this.lantencyMetrics = lantencyMetrics;
     }
 
     public void record(int iter, int latency, int bytes, long time) {
@@ -326,12 +380,13 @@ public class ProducerPerformance {
       this.windowTotalLatency += latency;
       this.windowMaxLatency = Math.max(windowMaxLatency, latency);
       if (iter % this.sampling == 0) {
+        lantencyMetrics.update(latency);
         this.latencies[index] = latency;
         this.index++;
       }
             /* maybe report the recent perf */
       if (time - windowStart >= reportingInterval) {
-        printWindow();
+        recordWindow();
         newWindow();
       }
     }
@@ -342,16 +397,18 @@ public class ProducerPerformance {
       return cb;
     }
 
-    public void printWindow() {
+    public void recordWindow() {
       long elapsed = System.currentTimeMillis() - windowStart;
       double recsPerSec = 1000.0 * windowCount / (double) elapsed;
       double mbPerSec = 1000.0 * this.windowBytes / (double) elapsed / (1024.0 * 1024.0);
-      System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency, %.1f max latency.%n",
-        windowCount,
-        recsPerSec,
-        mbPerSec,
-        windowTotalLatency / (double) windowCount,
-        (double) windowMaxLatency);
+      recsPerSecMetrics.update((long)recsPerSec);
+      mbPerSecMetrics.update((long)mbPerSec);
+//      System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency, %.1f max latency.%n",
+//        windowCount,
+//        recsPerSec,
+//        mbPerSec,
+//        windowTotalLatency / (double) windowCount,
+//        (double) windowMaxLatency);
     }
 
     public void newWindow() {
@@ -362,21 +419,25 @@ public class ProducerPerformance {
       this.windowBytes = 0;
     }
 
-    public void printTotal() {
-      long elapsed = System.currentTimeMillis() - start;
-      double recsPerSec = 1000.0 * count / (double) elapsed;
-      double mbPerSec = 1000.0 * this.bytes / (double) elapsed / (1024.0 * 1024.0);
-      int[] percs = percentiles(this.latencies, index, 0.5, 0.95, 0.99, 0.999);
-      System.out.printf("%d records sent, %f records/sec (%.2f MB/sec), %.2f ms avg latency, %.2f ms max latency, %d ms 50th, %d ms 95th, %d ms 99th, %d ms 99.9th.%n",
-        count,
-        recsPerSec,
-        mbPerSec,
-        totalLatency / (double) count,
-        (double) maxLatency,
-        percs[0],
-        percs[1],
-        percs[2],
-        percs[3]);
+//    public void recordTotal() {
+//      long elapsed = System.currentTimeMillis() - start;
+//      double recsPerSec = 1000.0 * count / (double) elapsed;
+//      double mbPerSec = 1000.0 * this.bytes / (double) elapsed / (1024.0 * 1024.0);
+//      int[] percs = percentiles(this.latencies, index, 0.5, 0.95, 0.99, 0.999);
+//      System.out.printf("%d records sent, %f records/sec (%.2f MB/sec), %.2f ms avg latency, %.2f ms max latency, %d ms 50th, %d ms 95th, %d ms 99th, %d ms 99.9th.%n",
+//        count,
+//        recsPerSec,
+//        mbPerSec,
+//        totalLatency / (double) count,
+//        (double) maxLatency,
+//        percs[0],
+//        percs[1],
+//        percs[2],
+//        percs[3]);
+//    }
+
+    public long getCount() {
+      return count;
     }
 
     private static int[] percentiles(int[] latencies, int count, double... percentiles) {
