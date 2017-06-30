@@ -14,6 +14,7 @@ import java.util.{Collections, Properties, Random}
 import java.text.SimpleDateFormat
 import java.util.concurrent.atomic.AtomicBoolean
 
+import com.codahale.metrics.Histogram
 import kafka.tools.PerfConfig
 import kafka.utils.CommandLineUtils
 
@@ -34,18 +35,32 @@ object ConsumerPerformance {
 		val consumerTimeout = new AtomicBoolean(false)
 		var metrics: mutable.Map[MetricName, _ <: Metric] = null
 
-		if (!config.hideHeader) {
-			if (!config.showDetailedStats)
-				println("start.time, end.time, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec")
-			else
-				println("time, threadID, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec")
-		}
+		val metricRegistry = MetricsUtil.getMetrics
+    val rpsHistogram = MetricsUtil.getHistogram("random_record_per_second", metricRegistry)
+    val mpsHistogram = MetricsUtil.getHistogram("random_mb_per_second", metricRegistry)
+    val latencyHistogram = MetricsUtil.getHistogram("random_lantency", metricRegistry)
+
+//		if (!config.hideHeader) {
+//			if (!config.showDetailedStats)
+//				println("start.time, end.time, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec")
+//			else
+//				println("time, threadID, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec")
+//		}
 
 		var startMs, endMs = 0L
 		val consumer = new KafkaConsumer[Array[Byte], Array[Byte]](config.props)
 		consumer.subscribe(Collections.singletonList(config.topic))
 		startMs = System.currentTimeMillis
-		consume(consumer, List(config.topic), config.numMessages, 1000, config, totalMessagesRead, totalBytesRead)
+		consume(consumer,
+      List(config.topic),
+      config.numMessages,
+      1000,
+      config,
+      totalMessagesRead,
+      totalBytesRead,
+      rpsHistogram,
+      mpsHistogram,
+      latencyHistogram)
 		endMs = System.currentTimeMillis
 
 		if (config.printMetrics) {
@@ -60,19 +75,68 @@ object ConsumerPerformance {
 				totalMBRead, totalMBRead / elapsedSecs, totalMessagesRead.get, totalMessagesRead.get / elapsedSecs))
 		}
 
-//		if (metrics != null) {
-//
-//			ToolsUtils.printMetrics(metrics)
-//		}
-
 	}
 
-	def consume(consumer: KafkaConsumer[Array[Byte],
-		          Array[Byte]], topics: List[String],
-							count: Long, timeout: Long,
+  def randomRead(config: ConsumerPerfConfig): Unit = {
+    val totalMessagesRead = new AtomicLong(0)
+    val totalBytesRead = new AtomicLong(0)
+    var metrics: mutable.Map[MetricName, _ <: Metric] = null
+
+    val metricRegistry = MetricsUtil.getMetrics
+    val rpsHistogram = MetricsUtil.getHistogram("random_record_per_second", metricRegistry)
+    val mpsHistogram = MetricsUtil.getHistogram("random_mb_per_second", metricRegistry)
+    val latencyHistogram = MetricsUtil.getHistogram("random_lantency", metricRegistry)
+
+
+    var startMs, endMs = 0L
+    val consumer = new KafkaConsumer[Array[Byte], Array[Byte]](config.props)
+    consumer.subscribe(Collections.singletonList(config.topic))
+    startMs = System.currentTimeMillis
+    consume(consumer,
+      List(config.topic),
+      config.numMessages,
+      1000,
+      config,
+      totalMessagesRead,
+      totalBytesRead,
+      rpsHistogram,
+      mpsHistogram,
+      latencyHistogram)
+
+    endMs = System.currentTimeMillis
+
+    if (config.printMetrics) {
+      metrics = consumer.metrics().asScala
+    }
+    consumer.close()
+
+
+
+    if (!config.showDetailedStats) {
+      MetricsUtil.report(
+        totalMessagesRead.get(),
+        config.outputDir,
+        "random_consumer_report",
+        1,
+        rpsHistogram,
+        mpsHistogram,
+        latencyHistogram
+      )
+    }
+
+    println("test finished!")
+  }
+
+	def consume(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
+              topics: List[String],
+							count: Long,
+              timeout: Long,
 							config: ConsumerPerfConfig,
 							totalMessagesRead: AtomicLong,
-							totalBytesRead: AtomicLong) {
+							totalBytesRead: AtomicLong,
+              rpsHistogram: Histogram,
+              mpsHistogram: Histogram,
+              latencyHistogram: Histogram) {
 		var bytesRead = 0L
 		var messagesRead = 0L
 		var lastBytesRead = 0L
@@ -111,7 +175,7 @@ object ConsumerPerformance {
 
 		while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
 			val random = new Random(System.currentTimeMillis())
-			// seek each partition to random pasition
+			// seek each partition to random position
 			topicPartitions.foreach { tp =>
 				val beginningOffset = beginningOffsets.get(tp)
 				val endOffset = endOffsets.get(tp)
@@ -121,7 +185,12 @@ object ConsumerPerformance {
 					consumer.seek(tp, seekPosition)
 				}
 			}
+
+      // pool records, and update latency metrics
+      val start = System.currentTimeMillis()
 			val records = consumer.poll(100).asScala
+      latencyHistogram.update(System.currentTimeMillis() - start)
+
 			currentTimeMillis = System.currentTimeMillis
 			if (records.nonEmpty)
 				lastConsumedTime = currentTimeMillis
@@ -133,16 +202,14 @@ object ConsumerPerformance {
 					bytesRead += record.value.size
         
 				if (currentTimeMillis - lastReportTime >= config.reportingInterval) {
-					if (config.showDetailedStats)
-						printProgressMessage(
-							0,
-							bytesRead,
-							lastBytesRead,
-							messagesRead,
-							lastMessagesRead,
-							lastReportTime,
-							currentTimeMillis,
-							config.dateFormat)
+					if (config.showDetailedStats) {
+            // update metrics
+            val elapsedMs: Double = currentTimeMillis - lastReportTime
+            val recordsRead = messagesRead - lastMessagesRead
+            val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
+            rpsHistogram.update((recordsRead / elapsedMs).toLong)
+            mpsHistogram.update((mbRead / elapsedMs).toLong)
+          }
 
           // update endOffsets every *config.reportingInterval*
           endOffsets = consumer.endOffsets(topicPartitions.asJava)
@@ -157,22 +224,7 @@ object ConsumerPerformance {
 		totalBytesRead.set(bytesRead)
 	}
 
-	def printProgressMessage(id: Int,
-													 bytesRead: Long,
-													 lastBytesRead: Long,
-													 messagesRead: Long,
-													 lastMessagesRead: Long,
-													 startMs: Long,
-													 endMs: Long,
-													 dateFormat: SimpleDateFormat) = {
-		val elapsedMs: Double = endMs - startMs
-		val totalMBRead = (bytesRead * 1.0) / (1024 * 1024)
-		val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
-		println("%s, %d, %.4f, %.4f, %d, %.4f".format(dateFormat.format(endMs), id, totalMBRead,
-			1000.0 * (mbRead / elapsedMs), messagesRead, ((messagesRead - lastMessagesRead) / elapsedMs) * 1000.0))
-	}
-
-	class ConsumerPerfConfig(args: Array[String]) extends PerfConfig(args) {
+	class ConsumerPerfConfig(args: Array[String], groupIDPrefix: String) extends PerfConfig(args) {
 		val zkConnectOpt = parser.accepts("zookeeper", "REQUIRED (only when using old consumer): The connection string for the zookeeper connection in the form host:port. " +
 			"Multiple URLS can be given to allow fail-over. This option is only used with the old consumer.")
 			.withRequiredArg
@@ -189,7 +241,7 @@ object ConsumerPerformance {
 		val groupIdOpt = parser.accepts("group", "The group id to consume on.")
 			.withRequiredArg
 			.describedAs("gid")
-			.defaultsTo("perf-consumer-" + new Random().nextInt(100000))
+			.defaultsTo(groupIDPrefix + "-perf-consumer-" + new Random().nextInt(100000))
 			.ofType(classOf[String])
 		val fetchSizeOpt = parser.accepts("fetch-size", "The amount of data to fetch in a single request.")
 			.withRequiredArg
@@ -198,6 +250,10 @@ object ConsumerPerformance {
 			.defaultsTo(1024 * 1024)
 		val resetBeginningOffsetOpt = parser.accepts("from-latest", "If the consumer does not already have an established " +
 			"offset to consume from, start with the latest message present in the log rather than the earliest message.")
+    val outputDirOpt = parser.accepts("outputDir", "REQUIRED: The report output dir.")
+    .withRequiredArg()
+    .describedAs("outputDir")
+    .ofType(classOf[String])
 		val socketBufferSizeOpt = parser.accepts("socket-buffer-size", "The size of the tcp RECV size.")
 			.withRequiredArg
 			.describedAs("size")
@@ -252,5 +308,6 @@ object ConsumerPerformance {
 		val showDetailedStats = options.has(showDetailedStatsOpt)
 		val dateFormat = new SimpleDateFormat(options.valueOf(dateFormatOpt))
 		val hideHeader = options.has(hideHeaderOpt)
+    val outputDir = options.valueOf(outputDirOpt)
 	}
 }

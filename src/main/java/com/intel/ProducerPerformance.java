@@ -28,6 +28,7 @@ public class ProducerPerformance {
 
   public static void main(String[] args) throws Exception {
     ArgumentParser parser = argParser();
+    KafkaProducer<byte[], byte[]> producer = null;
 
     try {
       Namespace res = parser.parseArgs(args);
@@ -84,7 +85,7 @@ public class ProducerPerformance {
 
       props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
-      KafkaProducer<byte[], byte[]> producer = new KafkaProducer<byte[], byte[]>(props);
+      producer = new KafkaProducer<byte[], byte[]>(props);
 
       MetricRegistry metrics = MetricsUtil.getMetrics();
       Histogram recordPerSecondMetrics = MetricsUtil.getHistogram("record_per_second", metrics);
@@ -119,10 +120,11 @@ public class ProducerPerformance {
       for (Future<Long> f : futures) {
         totalRecord += f.get();
       }
-      MetricsUtil.reportProducerReport(
+      MetricsUtil.report(
         totalRecord,
         outputDir,
         "producer_performance",
+        numProducers,
         recordPerSecondMetrics,
         sizePerSecondMetrics,
         lantencyMetrics);
@@ -134,6 +136,10 @@ public class ProducerPerformance {
       } else {
         parser.handleError(e);
         System.exit(1);
+      }
+    } finally {
+      if (producer != null) {
+        producer.close();
       }
     }
 
@@ -192,7 +198,7 @@ public class ProducerPerformance {
         }
 
         if (!shouldPrintMetrics) {
-          producer.close();
+          //producer.close();
 
           //print final results
           //stats.printTotal();
@@ -207,7 +213,7 @@ public class ProducerPerformance {
 
           //print out metrics
           ToolsUtils.printMetrics(producer.metrics());
-          producer.close();
+          //producer.close();
         }
         return stats.getCount();
       }

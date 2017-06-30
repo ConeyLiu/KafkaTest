@@ -65,13 +65,14 @@ public class MetricsUtil {
 
   }
 
-  public static void reportProducerReport(
+  public static void report(
     long count,
     String outputDir,
     String reportName,
+    int numOfThreads,
     Histogram recsPerSecMetrics,
     Histogram mbPerSecMetrics,
-    Histogram lantencyMetrics
+    Histogram latencyMetrics
   ) {
     try {
       File outputFile = new File(outputDir, reportName + ".csv");
@@ -93,15 +94,15 @@ public class MetricsUtil {
       String time = new Date(System.currentTimeMillis()).toString();
       Snapshot recsPerSecSnapshot = recsPerSecMetrics.getSnapshot();
       Snapshot mbPerSecSnapshot = mbPerSecMetrics.getSnapshot();
-      Snapshot latencySnapshot = lantencyMetrics.getSnapshot();
+      Snapshot latencySnapshot = latencyMetrics.getSnapshot();
       outputFileWriter.append(time  + ",")
         .append(count + ",")
-        .append(formatLong(recsPerSecSnapshot.getMin()) + ",")
-        .append(formatDouble(recsPerSecSnapshot.getMean()) + ",")
-        .append(formatLong(recsPerSecSnapshot.getMax()) + ",")
-        .append(formatLong(mbPerSecSnapshot.getMin()) + ",")
-        .append(formatDouble(mbPerSecSnapshot.getMean()) + ",")
-        .append(formatLong(mbPerSecSnapshot.getMax()) + ",")
+        .append(formatLong(recsPerSecSnapshot.getMin() * numOfThreads) + ",")
+        .append(formatDouble(recsPerSecSnapshot.getMean() * numOfThreads) + ",")
+        .append(formatLong(recsPerSecSnapshot.getMax() * numOfThreads) + ",")
+        .append(formatLong(mbPerSecSnapshot.getMin() * numOfThreads) + ",")
+        .append(formatDouble(mbPerSecSnapshot.getMean() * numOfThreads) + ",")
+        .append(formatLong(mbPerSecSnapshot.getMax() * numOfThreads) + ",")
         .append(formatLong(latencySnapshot.getMin()) + ",")
         .append(formatDouble(latencySnapshot.getMean()) + ",")
         .append(formatLong(latencySnapshot.getMax()) + "\n");
@@ -111,12 +112,12 @@ public class MetricsUtil {
     }
   }
 
-  public static Histogram getHistogram(String histogramName, MetricRegistry metriccs) {
-    return metriccs.histogram(histogramName);
+  public static Histogram getHistogram(String histogramName, MetricRegistry metrics) {
+    return metrics.histogram(histogramName);
   }
 
-  public static Counter getCounter(String counterName, MetricRegistry metriccs) {
-    return metriccs.counter(counterName);
+  public static Counter getCounter(String counterName, MetricRegistry metrics) {
+    return metrics.counter(counterName);
   }
 
   public static String formatDouble(Double d) {
@@ -124,6 +125,6 @@ public class MetricsUtil {
   }
 
   public static String formatLong(Long l) {
-    return String.format("%.3f", l);
+    return formatDouble((double)l);
   }
 }
