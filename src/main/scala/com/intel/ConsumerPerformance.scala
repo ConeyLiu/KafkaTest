@@ -10,7 +10,9 @@ import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRebalanceListe
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
-import java.util.{Collections, Properties, Random}
+
+import java.lang.{Long => jLang}
+import java.util.{Collections, Map, Properties, Random}
 import java.text.SimpleDateFormat
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -32,13 +34,13 @@ object ConsumerPerformance {
 		logger.info("Starting consumer...")
 		val totalMessagesRead = new AtomicLong(0)
 		val totalBytesRead = new AtomicLong(0)
-		val consumerTimeout = new AtomicBoolean(false)
+		//val consumerTimeout = new AtomicBoolean(false)
 		var metrics: mutable.Map[MetricName, _ <: Metric] = null
 
 		val metricRegistry = MetricsUtil.getMetrics
     val rpsHistogram = MetricsUtil.getHistogram("random_record_per_second", metricRegistry)
     val mpsHistogram = MetricsUtil.getHistogram("random_mb_per_second", metricRegistry)
-    val latencyHistogram = MetricsUtil.getHistogram("random_lantency", metricRegistry)
+    val latencyHistogram = MetricsUtil.getHistogram("random_latency", metricRegistry)
 
 //		if (!config.hideHeader) {
 //			if (!config.showDetailedStats)
@@ -60,7 +62,8 @@ object ConsumerPerformance {
       totalBytesRead,
       rpsHistogram,
       mpsHistogram,
-      latencyHistogram)
+      latencyHistogram,
+			config.randomRead)
 		endMs = System.currentTimeMillis
 
 		if (config.printMetrics) {
@@ -68,64 +71,21 @@ object ConsumerPerformance {
 		}
 		consumer.close()
 
-		val elapsedSecs = (endMs - startMs) / 1000.0
-		if (!config.showDetailedStats) {
-			val totalMBRead = (totalBytesRead.get * 1.0) / (1024 * 1024)
-			println("%s, %s, %.4f, %.4f, %d, %.4f".format(config.dateFormat.format(startMs), config.dateFormat.format(endMs),
-				totalMBRead, totalMBRead / elapsedSecs, totalMessagesRead.get, totalMessagesRead.get / elapsedSecs))
+		if (config.showDetailedStats) {
+			MetricsUtil.report(
+				totalMessagesRead.get(),
+				config.outputDir,
+				"consumer_report" + config.randomRead,
+				1,
+				rpsHistogram,
+				mpsHistogram,
+				latencyHistogram
+			)
 		}
 
+		println("test finished!")
+
 	}
-
-  def randomRead(config: ConsumerPerfConfig): Unit = {
-    val totalMessagesRead = new AtomicLong(0)
-    val totalBytesRead = new AtomicLong(0)
-    var metrics: mutable.Map[MetricName, _ <: Metric] = null
-
-    val metricRegistry = MetricsUtil.getMetrics
-    val rpsHistogram = MetricsUtil.getHistogram("random_record_per_second", metricRegistry)
-    val mpsHistogram = MetricsUtil.getHistogram("random_mb_per_second", metricRegistry)
-    val latencyHistogram = MetricsUtil.getHistogram("random_lantency", metricRegistry)
-
-
-    var startMs, endMs = 0L
-    val consumer = new KafkaConsumer[Array[Byte], Array[Byte]](config.props)
-    consumer.subscribe(Collections.singletonList(config.topic))
-    startMs = System.currentTimeMillis
-    consume(consumer,
-      List(config.topic),
-      config.numMessages,
-      1000,
-      config,
-      totalMessagesRead,
-      totalBytesRead,
-      rpsHistogram,
-      mpsHistogram,
-      latencyHistogram)
-
-    endMs = System.currentTimeMillis
-
-    if (config.printMetrics) {
-      metrics = consumer.metrics().asScala
-    }
-    consumer.close()
-
-
-
-    if (!config.showDetailedStats) {
-      MetricsUtil.report(
-        totalMessagesRead.get(),
-        config.outputDir,
-        "random_consumer_report",
-        1,
-        rpsHistogram,
-        mpsHistogram,
-        latencyHistogram
-      )
-    }
-
-    println("test finished!")
-  }
 
 	def consume(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
               topics: List[String],
@@ -136,7 +96,8 @@ object ConsumerPerformance {
 							totalBytesRead: AtomicLong,
               rpsHistogram: Histogram,
               mpsHistogram: Histogram,
-              latencyHistogram: Histogram) {
+              latencyHistogram: Histogram,
+							randomReading: Boolean) {
 		var bytesRead = 0L
 		var messagesRead = 0L
 		var lastBytesRead = 0L
@@ -170,25 +131,20 @@ object ConsumerPerformance {
 		val oneTopic = topics(0)
 		val partitionInfos = consumer.partitionsFor(oneTopic).asScala
 		val topicPartitions = partitionInfos.map(pi => new TopicPartition(oneTopic, pi.partition()))
+		// because this test just for read data (already store in Kafka), so the beginning offset and end offset
+		// are fixed.
 		val beginningOffsets = consumer.beginningOffsets(topicPartitions.asJava)
-		var endOffsets = consumer.endOffsets(topicPartitions.asJava)
+		val endOffsets = consumer.endOffsets(topicPartitions.asJava)
 
 		while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
-			val random = new Random(System.currentTimeMillis())
-			// seek each partition to random position
-			topicPartitions.foreach { tp =>
-				val beginningOffset = beginningOffsets.get(tp)
-				val endOffset = endOffsets.get(tp)
-				val seekPosition = beginningOffset + random.nextInt((endOffset - beginningOffset).toInt)
-				// if less than 100 records, skip it
-				if ((endOffset - seekPosition) > 100) {
-					consumer.seek(tp, seekPosition)
-				}
+
+			if (randomReading) {
+				seekToRandomPosition(consumer, topicPartitions, beginningOffsets, endOffsets)
 			}
 
-      // pool records, and update latency metrics
       val start = System.currentTimeMillis()
 			val records = consumer.poll(100).asScala
+			// update poll record latency
       latencyHistogram.update(System.currentTimeMillis() - start)
 
 			currentTimeMillis = System.currentTimeMillis
@@ -211,8 +167,6 @@ object ConsumerPerformance {
             mpsHistogram.update((mbRead / elapsedMs).toLong)
           }
 
-          // update endOffsets every *config.reportingInterval*
-          endOffsets = consumer.endOffsets(topicPartitions.asJava)
 					lastReportTime = currentTimeMillis
 					lastMessagesRead = messagesRead
 					lastBytesRead = bytesRead
@@ -224,7 +178,22 @@ object ConsumerPerformance {
 		totalBytesRead.set(bytesRead)
 	}
 
-	class ConsumerPerfConfig(args: Array[String], groupIDPrefix: String) extends PerfConfig(args) {
+	def seekToRandomPosition(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
+			topicPartitions: mutable.Iterable[TopicPartition],
+			beginningOffsets: util.Map[TopicPartition, jLang],
+			endOffsets: util.Map[TopicPartition, jLang]): Unit = {
+		val random = new Random(System.currentTimeMillis())
+		// seek each partition to random position
+		topicPartitions.foreach { tp =>
+			val beginningOffset = beginningOffsets.get(tp)
+			val endOffset = endOffsets.get(tp)
+			val seekPosition = beginningOffset + random.nextInt((endOffset - beginningOffset).toInt)
+			// seek to random position
+			consumer.seek(tp, seekPosition)
+		}
+	}
+
+	class ConsumerPerfConfig(args: Array[String]) extends PerfConfig(args) {
 		val zkConnectOpt = parser.accepts("zookeeper", "REQUIRED (only when using old consumer): The connection string for the zookeeper connection in the form host:port. " +
 			"Multiple URLS can be given to allow fail-over. This option is only used with the old consumer.")
 			.withRequiredArg
@@ -241,8 +210,13 @@ object ConsumerPerformance {
 		val groupIdOpt = parser.accepts("group", "The group id to consume on.")
 			.withRequiredArg
 			.describedAs("gid")
-			.defaultsTo(groupIDPrefix + "-perf-consumer-" + new Random().nextInt(100000))
+			.defaultsTo("perf-consumer-" + new Random().nextInt(100000))
 			.ofType(classOf[String])
+		val randomReadOpt = parser.accepts("randomRead", "Whether random read the data.")
+			.withRequiredArg()
+			.describedAs("randomRead")
+			.defaultsTo("false")
+			.ofType(classOf[Boolean])
 		val fetchSizeOpt = parser.accepts("fetch-size", "The amount of data to fetch in a single request.")
 			.withRequiredArg
 			.describedAs("size")
@@ -251,9 +225,9 @@ object ConsumerPerformance {
 		val resetBeginningOffsetOpt = parser.accepts("from-latest", "If the consumer does not already have an established " +
 			"offset to consume from, start with the latest message present in the log rather than the earliest message.")
     val outputDirOpt = parser.accepts("outputDir", "REQUIRED: The report output dir.")
-    .withRequiredArg()
-    .describedAs("outputDir")
-    .ofType(classOf[String])
+			.withRequiredArg()
+			.describedAs("outputDir")
+			.ofType(classOf[String])
 		val socketBufferSizeOpt = parser.accepts("socket-buffer-size", "The size of the tcp RECV size.")
 			.withRequiredArg
 			.describedAs("size")
@@ -289,16 +263,6 @@ object ConsumerPerformance {
 			new Properties
 		}
 
-		CommandLineUtils.checkRequiredArgs(parser, options, bootstrapServersOpt)
-		props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, options.valueOf(bootstrapServersOpt))
-		props.put(ConsumerConfig.GROUP_ID_CONFIG, options.valueOf(groupIdOpt))
-		props.put(ConsumerConfig.RECEIVE_BUFFER_CONFIG, options.valueOf(socketBufferSizeOpt).toString)
-		props.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, options.valueOf(fetchSizeOpt).toString)
-		props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, if (options.has(resetBeginningOffsetOpt)) "latest" else "earliest")
-		props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer])
-		props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer])
-		props.put(ConsumerConfig.CHECK_CRCS_CONFIG, "false")
-
 		val numThreads = options.valueOf(numThreadsOpt).intValue
 		val topic = options.valueOf(topicOpt)
 		val numMessages = options.valueOf(numMessagesOpt).longValue
@@ -308,6 +272,23 @@ object ConsumerPerformance {
 		val showDetailedStats = options.has(showDetailedStatsOpt)
 		val dateFormat = new SimpleDateFormat(options.valueOf(dateFormatOpt))
 		val hideHeader = options.has(hideHeaderOpt)
-    val outputDir = options.valueOf(outputDirOpt)
+		val outputDir = options.valueOf(outputDirOpt)
+		val randomRead = options.valueOf(randomReadOpt).booleanValue()
+
+		val whetherRandom = if (randomRead) {
+			"_random"
+		} else {
+			""
+		}
+
+		CommandLineUtils.checkRequiredArgs(parser, options, bootstrapServersOpt)
+		props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, options.valueOf(bootstrapServersOpt))
+		props.put(ConsumerConfig.GROUP_ID_CONFIG, options.valueOf(groupIdOpt) + whetherRandom)
+		props.put(ConsumerConfig.RECEIVE_BUFFER_CONFIG, options.valueOf(socketBufferSizeOpt).toString)
+		props.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, options.valueOf(fetchSizeOpt).toString)
+		props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, if (options.has(resetBeginningOffsetOpt)) "latest" else "earliest")
+		props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer])
+		props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer])
+		props.put(ConsumerConfig.CHECK_CRCS_CONFIG, "false")
 	}
 }

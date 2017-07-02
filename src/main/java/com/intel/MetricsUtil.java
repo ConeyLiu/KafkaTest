@@ -25,16 +25,18 @@ public class MetricsUtil {
     return metriccs;
   }
 
-  public static void reportHistogram(
+  public static void reportStream(
     String outputDir,
     String metricsName,
-    Histogram histogram
+    Histogram rpsHistogram,
+    Histogram mpsHistogram,
+    Counter counter
   ) {
     try {
       File outputFile = new File(outputDir, metricsName + ".csv");
       System.out.println("written out metrics to " + outputFile.getCanonicalPath());
-      String header = "time,count,max_throughput(r/s),mean_throughput(r/s),min_throughput(r/s)," +
-                        "stddev_throughput(r/s),p75_throughput(r/s),p999_throughput(r/s)\n";
+      String header = "time,count,min_throughput(records/sec),avg_throughput(records/sec),max_throughput(records/sec)," +
+                        "min_throughput(MB/sec),avg_throughput(MB/sec),max_throughput(MB/sec)\n";
       boolean fileExists = outputFile.exists();
       if (!fileExists) {
         File parent = outputFile.getParentFile();
@@ -48,16 +50,17 @@ public class MetricsUtil {
         outputFileWriter.append(header);
       }
       String time = new Date(System.currentTimeMillis()).toString();
-      Long count = histogram.getCount();
-      Snapshot snapshot = histogram.getSnapshot();
+      Long count = counter.getCount();
+      Snapshot rpsSnapshot = rpsHistogram.getSnapshot();
+      Snapshot mpsSnapshot = mpsHistogram.getSnapshot();
       outputFileWriter.append(time  + ",")
         .append(count + ",")
-        .append(formatLong(snapshot.getMax()) + ",")
-        .append(formatDouble(snapshot.getMean()) + ",")
-        .append(formatLong(snapshot.getMin()) + ",")
-        .append(formatDouble(snapshot.getStdDev()) + ",")
-        .append(formatDouble(snapshot.get75thPercentile()) + ",")
-        .append(formatDouble(snapshot.get999thPercentile()) + "\n");
+        .append(formatLong(rpsSnapshot.getMin()) + ",")
+        .append(formatDouble(rpsSnapshot.getMean()) + ",")
+        .append(formatLong(rpsSnapshot.getMax()) + ",")
+        .append(formatLong(mpsSnapshot.getMin()) + ",")
+        .append(formatDouble(mpsSnapshot.getMean()) + ",")
+        .append(formatLong(mpsSnapshot.getMax()) + "\n");
       outputFileWriter.close();
     } catch (IOException e) {
       e.printStackTrace();
@@ -77,8 +80,8 @@ public class MetricsUtil {
     try {
       File outputFile = new File(outputDir, reportName + ".csv");
       System.out.println("written out metrics to " + outputFile.getCanonicalPath());
-      String header = "time,record count,min_ratio(records/sec),avg_ratio(records/sec),max_ratio(records/sec),"
-        + "min_ratio(MB/sec),avg_ratio(MB/sec),max_ratio(MB/sec),min_latency(ms),avg_latency(ms),max_latency(ms)\n";
+      String header = "time,record count,min_throughput(records/sec),avg_throughput(records/sec),max_throughput(records/sec),"
+        + "min_throughput(MB/sec),avg_throughput(MB/sec),max_throughput(MB/sec),min_latency(ms),avg_latency(ms),max_latency(ms)\n";
       boolean fileExists = outputFile.exists();
       if (!fileExists) {
         File parent = outputFile.getParentFile();
