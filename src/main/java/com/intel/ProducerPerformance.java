@@ -27,6 +27,9 @@ import static net.sourceforge.argparse4j.impl.Arguments.storeTrue;
 public class ProducerPerformance {
 
   public static void main(String[] args) throws Exception {
+    System.out.println("Test started !");
+    long start = System.currentTimeMillis();
+
     ArgumentParser parser = argParser();
     KafkaProducer<byte[], byte[]> producer = null;
 
@@ -85,6 +88,7 @@ public class ProducerPerformance {
 
       props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
+      props.put(ProducerConfig.ACKS_CONFIG, "1");
       producer = new KafkaProducer<byte[], byte[]>(props);
 
       MetricRegistry metrics = MetricsUtil.getMetrics();
@@ -120,7 +124,11 @@ public class ProducerPerformance {
       for (Future<Long> f : futures) {
         totalRecord += f.get();
       }
+
+      producer.flush();
+
       MetricsUtil.report(
+        System.currentTimeMillis() - start,
         totalRecord,
         outputDir,
         "producer_performance",
@@ -129,6 +137,7 @@ public class ProducerPerformance {
         sizePerSecondMetrics,
         lantencyMetrics);
 
+      System.out.println("Test finished !");
     } catch (ArgumentParserException e) {
       if (args.length == 0) {
         parser.printHelp();
@@ -164,7 +173,7 @@ public class ProducerPerformance {
 
       @Override
       public Long call() throws Exception {
-        byte[] payload = new byte[recordSize];;
+        byte[] payload = new byte[recordSize];
         Random random = new Random(0);
 
         for (int i = 0; i < payload.length; ++i) {
@@ -197,24 +206,7 @@ public class ProducerPerformance {
           }
         }
 
-        if (!shouldPrintMetrics) {
-          //producer.close();
-
-          //print final results
-          //stats.printTotal();
-        } else {
-          // Make sure all messages are sent before printing out the stats and the metrics
-          // We need to do this in a different branch for now since tests/kafkatest/sanity_checks/test_performance_services.py
-          // expects this class to work with older versions of the client jar that don't support flush().
-          producer.flush();
-
-          //print final results
-          //stats.printTotal();
-
-          //print out metrics
-          ToolsUtils.printMetrics(producer.metrics());
-          //producer.close();
-        }
+        producer.flush();
         return stats.getCount();
       }
     };
@@ -332,22 +324,15 @@ public class ProducerPerformance {
     private String threadName;
     private long start;
     private long windowStart;
-    private int[] latencies;
-    private int sampling;
     private int iteration;
-    private int index;
     private long count;
-    private long bytes;
-    private int maxLatency;
-    private long totalLatency;
     private long windowCount;
-    private int windowMaxLatency;
-    private long windowTotalLatency;
     private long windowBytes;
     private long reportingInterval;
     private Histogram recsPerSecMetrics;
     private Histogram mbPerSecMetrics;
     private Histogram lantencyMetrics;
+    private Boolean firstRecord = true;
 
     public Stats(String threadName,
                  long numRecords,
@@ -358,18 +343,9 @@ public class ProducerPerformance {
       this.threadName = threadName;
       this.start = System.currentTimeMillis();
       this.windowStart = System.currentTimeMillis();
-      this.index = 0;
       this.iteration = 0;
-      this.sampling = (int) (numRecords / Math.min(numRecords, 500000));
-      this.latencies = new int[(int) (numRecords / this.sampling) + 1];
-      this.index = 0;
-      this.maxLatency = 0;
-      this.totalLatency = 0;
       this.windowCount = 0;
-      this.windowMaxLatency = 0;
-      this.windowTotalLatency = 0;
       this.windowBytes = 0;
-      this.totalLatency = 0;
       this.reportingInterval = reportingInterval;
       this.recsPerSecMetrics = recsPerSecMetrics;
       this.mbPerSecMetrics = mbPerSecMetrics;
@@ -377,21 +353,18 @@ public class ProducerPerformance {
     }
 
     public void record(int iter, int latency, int bytes, long time) {
+      if (firstRecord) {
+        firstRecord = false;
+        newWindow();
+      }
+
       this.count++;
-      this.bytes += bytes;
-      this.totalLatency += latency;
-      this.maxLatency = Math.max(this.maxLatency, latency);
       this.windowCount++;
       this.windowBytes += bytes;
-      this.windowTotalLatency += latency;
-      this.windowMaxLatency = Math.max(windowMaxLatency, latency);
-      if (iter % this.sampling == 0) {
-        lantencyMetrics.update(latency);
-        this.latencies[index] = latency;
-        this.index++;
-      }
-            /* maybe report the recent perf */
+
+
       if (time - windowStart >= reportingInterval) {
+        lantencyMetrics.update(latency);
         recordWindow();
         newWindow();
       }
@@ -409,38 +382,14 @@ public class ProducerPerformance {
       double mbPerSec = 1000.0 * this.windowBytes / (double) elapsed / (1024.0 * 1024.0);
       recsPerSecMetrics.update((long)recsPerSec);
       mbPerSecMetrics.update((long)mbPerSec);
-//      System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency, %.1f max latency.%n",
-//        windowCount,
-//        recsPerSec,
-//        mbPerSec,
-//        windowTotalLatency / (double) windowCount,
-//        (double) windowMaxLatency);
     }
 
     public void newWindow() {
       this.windowStart = System.currentTimeMillis();
       this.windowCount = 0;
-      this.windowMaxLatency = 0;
-      this.windowTotalLatency = 0;
       this.windowBytes = 0;
     }
 
-//    public void recordTotal() {
-//      long elapsed = System.currentTimeMillis() - start;
-//      double recsPerSec = 1000.0 * count / (double) elapsed;
-//      double mbPerSec = 1000.0 * this.bytes / (double) elapsed / (1024.0 * 1024.0);
-//      int[] percs = percentiles(this.latencies, index, 0.5, 0.95, 0.99, 0.999);
-//      System.out.printf("%d records sent, %f records/sec (%.2f MB/sec), %.2f ms avg latency, %.2f ms max latency, %d ms 50th, %d ms 95th, %d ms 99th, %d ms 99.9th.%n",
-//        count,
-//        recsPerSec,
-//        mbPerSec,
-//        totalLatency / (double) count,
-//        (double) maxLatency,
-//        percs[0],
-//        percs[1],
-//        percs[2],
-//        percs[3]);
-//    }
 
     public long getCount() {
       return count;

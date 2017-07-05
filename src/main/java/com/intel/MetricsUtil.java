@@ -9,6 +9,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.Date;
+import java.util.Random;
 
 
 public class MetricsUtil {
@@ -26,14 +27,15 @@ public class MetricsUtil {
   }
 
   public static void reportStream(
+    long totalTime,
     String outputDir,
-    String metricsName,
+    String reportName,
     Histogram rpsHistogram,
     Histogram mpsHistogram,
     Counter counter
   ) {
     try {
-      File outputFile = new File(outputDir, metricsName + ".csv");
+      File outputFile = new File(outputDir, reportName + ".csv");
       System.out.println("written out metrics to " + outputFile.getCanonicalPath());
       String header = "time,count,min_throughput(records/sec),avg_throughput(records/sec),max_throughput(records/sec)," +
                         "min_throughput(MB/sec),avg_throughput(MB/sec),max_throughput(MB/sec)\n";
@@ -49,11 +51,11 @@ public class MetricsUtil {
       if (!fileExists) {
         outputFileWriter.append(header);
       }
-      String time = new Date(System.currentTimeMillis()).toString();
+
       Long count = counter.getCount();
       Snapshot rpsSnapshot = rpsHistogram.getSnapshot();
       Snapshot mpsSnapshot = mpsHistogram.getSnapshot();
-      outputFileWriter.append(time  + ",")
+      outputFileWriter.append(totalTime  + ",")
         .append(count + ",")
         .append(formatLong(rpsSnapshot.getMin()) + ",")
         .append(formatDouble(rpsSnapshot.getMean()) + ",")
@@ -69,6 +71,7 @@ public class MetricsUtil {
   }
 
   public static void report(
+    long totalTime,
     long count,
     String outputDir,
     String reportName,
@@ -78,7 +81,8 @@ public class MetricsUtil {
     Histogram latencyMetrics
   ) {
     try {
-      File outputFile = new File(outputDir, reportName + ".csv");
+      Random random = new Random(System.currentTimeMillis());
+      File outputFile = new File(outputDir, reportName + random.nextInt(1000) + ".csv");
       System.out.println("written out metrics to " + outputFile.getCanonicalPath());
       String header = "time,record count,min_throughput(records/sec),avg_throughput(records/sec),max_throughput(records/sec),"
         + "min_throughput(MB/sec),avg_throughput(MB/sec),max_throughput(MB/sec),min_latency(ms),avg_latency(ms),max_latency(ms)\n";
@@ -94,11 +98,11 @@ public class MetricsUtil {
       if (!fileExists) {
         outputFileWriter.append(header);
       }
-      String time = new Date(System.currentTimeMillis()).toString();
+
       Snapshot recsPerSecSnapshot = recsPerSecMetrics.getSnapshot();
       Snapshot mbPerSecSnapshot = mbPerSecMetrics.getSnapshot();
       Snapshot latencySnapshot = latencyMetrics.getSnapshot();
-      outputFileWriter.append(time  + ",")
+      outputFileWriter.append(totalTime  + ",")
         .append(count + ",")
         .append(formatLong(recsPerSecSnapshot.getMin() * numOfThreads) + ",")
         .append(formatDouble(recsPerSecSnapshot.getMean() * numOfThreads) + ",")

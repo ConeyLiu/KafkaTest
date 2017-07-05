@@ -23,12 +23,15 @@ import kafka.utils.CommandLineUtils
 import scala.collection.mutable
 
 /**
-	*Performance test for the full zookeeper consumer
-	*/
+  *Performance test for the full zookeeper consumer
+  */
 object ConsumerPerformance {
 	private val logger = Logger.getLogger(getClass())
 
 	def main(args: Array[String]): Unit = {
+		println("Test started!")
+
+		val start = System.currentTimeMillis()
 
 		val config = new ConsumerPerfConfig(args)
 		logger.info("Starting consumer...")
@@ -38,9 +41,9 @@ object ConsumerPerformance {
 		var metrics: mutable.Map[MetricName, _ <: Metric] = null
 
 		val metricRegistry = MetricsUtil.getMetrics
-    val rpsHistogram = MetricsUtil.getHistogram("random_record_per_second", metricRegistry)
-    val mpsHistogram = MetricsUtil.getHistogram("random_mb_per_second", metricRegistry)
-    val latencyHistogram = MetricsUtil.getHistogram("random_latency", metricRegistry)
+                val rpsHistogram = MetricsUtil.getHistogram("random_record_per_second", metricRegistry)
+                val mpsHistogram = MetricsUtil.getHistogram("random_mb_per_second", metricRegistry)
+                val latencyHistogram = MetricsUtil.getHistogram("random_latency", metricRegistry)
 
 //		if (!config.hideHeader) {
 //			if (!config.showDetailedStats)
@@ -54,15 +57,15 @@ object ConsumerPerformance {
 		consumer.subscribe(Collections.singletonList(config.topic))
 		startMs = System.currentTimeMillis
 		consume(consumer,
-      List(config.topic),
-      config.numMessages,
-      1000,
-      config,
-      totalMessagesRead,
-      totalBytesRead,
-      rpsHistogram,
-      mpsHistogram,
-      latencyHistogram,
+                        List(config.topic),
+                        config.numMessages,
+                        10000,
+                        config,
+                        totalMessagesRead,
+                        totalBytesRead,
+                        rpsHistogram,
+                        mpsHistogram,
+                        latencyHistogram,
 			config.randomRead)
 		endMs = System.currentTimeMillis
 
@@ -73,9 +76,10 @@ object ConsumerPerformance {
 
 		if (config.showDetailedStats) {
 			MetricsUtil.report(
+				System.currentTimeMillis() - start,
 				totalMessagesRead.get(),
 				config.outputDir,
-				"consumer_report" + config.randomRead,
+				"consumer_report" + config.whetherRandom,
 				1,
 				rpsHistogram,
 				mpsHistogram,
@@ -89,20 +93,15 @@ object ConsumerPerformance {
 
 	def consume(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
               topics: List[String],
-							count: Long,
+	      count: Long,
               timeout: Long,
-							config: ConsumerPerfConfig,
-							totalMessagesRead: AtomicLong,
-							totalBytesRead: AtomicLong,
+              config: ConsumerPerfConfig,
+	      totalMessagesRead: AtomicLong,
+	      totalBytesRead: AtomicLong,
               rpsHistogram: Histogram,
               mpsHistogram: Histogram,
               latencyHistogram: Histogram,
-							randomReading: Boolean) {
-		var bytesRead = 0L
-		var messagesRead = 0L
-		var lastBytesRead = 0L
-		var lastMessagesRead = 0L
-
+	      randomReading: Boolean) {
 		// Wait for group join, metadata fetch, etc
 		val joinTimeout = 10000
 		val isAssigned = new AtomicBoolean(false)
@@ -122,11 +121,6 @@ object ConsumerPerformance {
 		}
 		consumer.seekToBeginning(Collections.emptyList())
 
-		// Now start the benchmark
-		val startMs = System.currentTimeMillis
-		var lastReportTime: Long = startMs
-		var lastConsumedTime = System.currentTimeMillis
-		var currentTimeMillis = lastConsumedTime
 
 		val oneTopic = topics(0)
 		val partitionInfos = consumer.partitionsFor(oneTopic).asScala
@@ -136,6 +130,16 @@ object ConsumerPerformance {
 		val beginningOffsets = consumer.beginningOffsets(topicPartitions.asJava)
 		val endOffsets = consumer.endOffsets(topicPartitions.asJava)
 
+    // Now start the benchmark
+    var bytesRead = 0L
+    var messagesRead = 0L
+    var lastBytesRead = 0L
+    var lastMessagesRead = 0L
+    val startMs = System.currentTimeMillis
+    var lastReportTime: Long = startMs
+    var lastConsumedTime = System.currentTimeMillis
+    var currentTimeMillis = lastConsumedTime
+
 		while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
 
 			if (randomReading) {
@@ -143,7 +147,8 @@ object ConsumerPerformance {
 			}
 
       val start = System.currentTimeMillis()
-			val records = consumer.poll(100).asScala
+      // using 1000 instead of 100, because of the random read need more time
+      val records = consumer.poll(1000).asScala
 			// update poll record latency
       latencyHistogram.update(System.currentTimeMillis() - start)
 
@@ -162,9 +167,9 @@ object ConsumerPerformance {
             // update metrics
             val elapsedMs: Double = currentTimeMillis - lastReportTime
             val recordsRead = messagesRead - lastMessagesRead
-            val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
-            rpsHistogram.update((recordsRead / elapsedMs).toLong)
-            mpsHistogram.update((mbRead / elapsedMs).toLong)
+            val mbRead = ((bytesRead - lastBytesRead) * 1.0) /(1024 * 1024)
+            rpsHistogram.update((1000.0 * recordsRead / elapsedMs).toLong)
+            mpsHistogram.update((1000.0 * mbRead / elapsedMs).toLong)
           }
 
 					lastReportTime = currentTimeMillis
@@ -174,21 +179,37 @@ object ConsumerPerformance {
 			}
 		}
 
+    // the last batch or the first but ran time less than reportInterval.
+    if (currentTimeMillis - lastReportTime > 0) {
+      if (config.showDetailedStats) {
+        // update metrics
+        val elapsedMs: Double = currentTimeMillis - lastReportTime
+        val recordsRead = messagesRead - lastMessagesRead
+        val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
+        rpsHistogram.update((1000.0 * recordsRead / elapsedMs).toLong)
+        mpsHistogram.update((1000.0 * mbRead / elapsedMs).toLong)
+      }
+
+      lastReportTime = currentTimeMillis
+      lastMessagesRead = messagesRead
+      lastBytesRead = bytesRead
+    }
+
 		totalMessagesRead.set(messagesRead)
 		totalBytesRead.set(bytesRead)
 	}
 
 	def seekToRandomPosition(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
-			topicPartitions: mutable.Iterable[TopicPartition],
-			beginningOffsets: util.Map[TopicPartition, jLang],
-			endOffsets: util.Map[TopicPartition, jLang]): Unit = {
+		topicPartitions: mutable.Iterable[TopicPartition],
+		beginningOffsets: util.Map[TopicPartition, jLang],
+		endOffsets: util.Map[TopicPartition, jLang]): Unit = {
 		val random = new Random(System.currentTimeMillis())
 		// seek each partition to random position
 		topicPartitions.foreach { tp =>
-			val beginningOffset = beginningOffsets.get(tp)
-			val endOffset = endOffsets.get(tp)
-			val seekPosition = beginningOffset + random.nextInt((endOffset - beginningOffset).toInt)
-			// seek to random position
+		val beginningOffset = beginningOffsets.get(tp)
+		val endOffset = endOffsets.get(tp)
+		val seekPosition = beginningOffset + random.nextInt((endOffset - beginningOffset).toInt)
+		// seek to random position
 			consumer.seek(tp, seekPosition)
 		}
 	}
@@ -215,8 +236,8 @@ object ConsumerPerformance {
 		val randomReadOpt = parser.accepts("randomRead", "Whether random read the data.")
 			.withRequiredArg()
 			.describedAs("randomRead")
-			.defaultsTo("false")
 			.ofType(classOf[Boolean])
+			.defaultsTo(false)
 		val fetchSizeOpt = parser.accepts("fetch-size", "The amount of data to fetch in a single request.")
 			.withRequiredArg
 			.describedAs("size")

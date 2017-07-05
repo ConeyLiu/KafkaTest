@@ -19,23 +19,22 @@ import scala.collection.mutable
 
 object Main {
 	def main(args: Array[String]): Unit = {
-    var randomRead: Boolean = null
-    var outputDir: String = null
+    println("Test started !")
+
+    var config: StreamingConfig = null
     var rpsHistogram: Histogram = null
     var mpsHistogram: Histogram = null
     var count: Counter = null
     var occurError = true
+    val start = System.currentTimeMillis()
     try {
 
-      val config = new StreamingConfig(args)
+      config = new StreamingConfig(args)
       val batchInterval = config.batchInterval.toInt
       val conf = new SparkConf().setAppName("Kafka Test")
       val ssc = new StreamingContext(conf, Seconds(batchInterval))
 
       val topic = config.topic
-      outputDir = config.outputDir
-      randomRead = config.randomRead
-
 
       // histogram metrics recorder
       val metrics = MetricsUtil.getMetrics
@@ -125,6 +124,8 @@ object Main {
       ssc.start()
       occurError = false
       ssc.awaitTermination()
+
+      println("Test finished!")
     } catch {
       case ie: IOException => {
         ie.printStackTrace()
@@ -136,9 +137,11 @@ object Main {
         System.exit(-2)
       }
     } finally {
-      if (!occurError) {
-        MetricsUtil.reportStream(outputDir,
-          "streaming" + randomRead,
+      if (config != null && rpsHistogram != null && mpsHistogram != null && count != null) {
+        MetricsUtil.reportStream(
+          System.currentTimeMillis() - start,
+          config.outputDir,
+          "streaming" + config.whetherRandom,
           rpsHistogram,
           mpsHistogram,
           count)
@@ -200,15 +203,15 @@ object Main {
       ""
     }
 
-    val props = Map[String, Object] {
+    val props = Map[String, Object](
       ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG -> options.valueOf(bootstrapServersOpt).toString,
-      ConsumerConfig.GROUP_ID_CONFIG -> options.valueOf(groupIdOpt) + whetherRandom,
+      ConsumerConfig.GROUP_ID_CONFIG -> (options.valueOf(groupIdOpt) + whetherRandom),
       ConsumerConfig.RECEIVE_BUFFER_CONFIG -> options.valueOf(socketBufferSizeOpt).toString,
       ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG -> options.valueOf(fetchSizeOpt).toString,
       ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG -> classOf[ByteArrayDeserializer],
       ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG -> classOf[ByteArrayDeserializer],
       ConsumerConfig.CHECK_CRCS_CONFIG -> (false: jBoolean),
       ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG -> (false: jBoolean)
-    }
+    )
   }
 }
