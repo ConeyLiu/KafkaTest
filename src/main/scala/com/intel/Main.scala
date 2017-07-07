@@ -31,7 +31,7 @@ object Main {
 
       config = new StreamingConfig(args)
       val batchInterval = config.batchInterval.toInt
-      val conf = new SparkConf().setAppName("Kafka Test")
+      val conf = new SparkConf().setAppName("Kafka Test " + System.currentTimeMillis())
       val ssc = new StreamingContext(conf, Seconds(batchInterval))
 
       val topic = config.topic
@@ -82,8 +82,8 @@ object Main {
               }
 
               val endOffset = random.nextInt(offsetMap.getOrElse(p.index, 0L).toInt)
-              val startOffset = if ((endOffset - 100) > 0) {
-                endOffset - 100
+              val startOffset = if ((endOffset - 2000) >= 0) {
+                endOffset - 2000
               } else {
                 0
               }

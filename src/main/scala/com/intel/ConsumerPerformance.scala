@@ -133,6 +133,7 @@ object ConsumerPerformance {
     // Now start the benchmark
     var bytesRead = 0L
     var messagesRead = 0L
+    var messagesReadInBatch = 0L
     var lastBytesRead = 0L
     var lastMessagesRead = 0L
     val startMs = System.currentTimeMillis
@@ -142,7 +143,8 @@ object ConsumerPerformance {
 
 		while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
 
-			if (randomReading) {
+			if (randomReading && messagesReadInBatch >= 2000) {
+        messagesReadInBatch = 0L
 				seekToRandomPosition(consumer, topicPartitions, beginningOffsets, endOffsets)
 			}
 
@@ -156,6 +158,9 @@ object ConsumerPerformance {
 			if (records.nonEmpty)
 				lastConsumedTime = currentTimeMillis
 			for (record <- records) {
+        // this is used for random read, but don't have influence on sequence read,
+        // so the count should be equal to `messagesRead` when sequence read.
+        messagesReadInBatch += 1
 				messagesRead += 1
 				if (record.key != null)
 					bytesRead += record.key.size

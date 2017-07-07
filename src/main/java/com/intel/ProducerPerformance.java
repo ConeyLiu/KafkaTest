@@ -88,13 +88,13 @@ public class ProducerPerformance {
 
       props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
-      props.put(ProducerConfig.ACKS_CONFIG, "1");
+      //props.put(ProducerConfig.ACKS_CONFIG, "1");
       producer = new KafkaProducer<byte[], byte[]>(props);
 
       MetricRegistry metrics = MetricsUtil.getMetrics();
       Histogram recordPerSecondMetrics = MetricsUtil.getHistogram("record_per_second", metrics);
       Histogram sizePerSecondMetrics = MetricsUtil.getHistogram("size_per_second", metrics);
-      Histogram lantencyMetrics = MetricsUtil.getHistogram("lantency", metrics);
+      Histogram latencyMetrics = MetricsUtil.getHistogram("latency", metrics);
 
       // thread pool for producer
       ExecutorService executor = Executors.newFixedThreadPool(numProducers);
@@ -113,7 +113,7 @@ public class ProducerPerformance {
           producer,
           recordPerSecondMetrics,
           sizePerSecondMetrics,
-          lantencyMetrics
+          latencyMetrics
         );
         futures[i] = executor.submit(callable);
       }
@@ -135,7 +135,7 @@ public class ProducerPerformance {
         numProducers,
         recordPerSecondMetrics,
         sizePerSecondMetrics,
-        lantencyMetrics);
+        latencyMetrics);
 
       System.out.println("Test finished !");
     } catch (ArgumentParserException e) {
