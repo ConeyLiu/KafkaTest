@@ -93,19 +93,19 @@ object ConsumerPerformance {
 
 	def consume(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
               topics: List[String],
-	      count: Long,
+              count: Long,
               timeout: Long,
               config: ConsumerPerfConfig,
-	      totalMessagesRead: AtomicLong,
-	      totalBytesRead: AtomicLong,
+              totalMessagesRead: AtomicLong,
+              totalBytesRead: AtomicLong,
               rpsHistogram: Histogram,
               mpsHistogram: Histogram,
               latencyHistogram: Histogram,
-	      randomReading: Boolean) {
-		// Wait for group join, metadata fetch, etc
-		val joinTimeout = 10000
-		val isAssigned = new AtomicBoolean(false)
-		consumer.subscribe(topics.asJava, new ConsumerRebalanceListener {
+              randomReading: Boolean) {
+              // Wait for group join, metadata fetch, etc
+              val joinTimeout = 10000
+              val isAssigned = new AtomicBoolean(false)
+              consumer.subscribe(topics.asJava, new ConsumerRebalanceListener {
 			def onPartitionsAssigned(partitions: util.Collection[TopicPartition]) {
 				isAssigned.set(true)
 			}
@@ -130,37 +130,37 @@ object ConsumerPerformance {
 		val beginningOffsets = consumer.beginningOffsets(topicPartitions.asJava)
 		val endOffsets = consumer.endOffsets(topicPartitions.asJava)
 
-    // Now start the benchmark
-    var bytesRead = 0L
-    var messagesRead = 0L
-    var messagesReadInBatch = 0L
-    var lastBytesRead = 0L
-    var lastMessagesRead = 0L
-    val startMs = System.currentTimeMillis
-    var lastReportTime: Long = startMs
-    var lastConsumedTime = System.currentTimeMillis
-    var currentTimeMillis = lastConsumedTime
+                // Now start the benchmark
+                var bytesRead = 0L
+                var messagesRead = 0L
+                var messagesReadInBatch = 0L
+                var lastBytesRead = 0L
+                var lastMessagesRead = 0L
+                val startMs = System.currentTimeMillis
+                var lastReportTime: Long = startMs
+                var lastConsumedTime = System.currentTimeMillis
+                var currentTimeMillis = lastConsumedTime
 
 		while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
 
 			if (randomReading && messagesReadInBatch >= 2000) {
-        messagesReadInBatch = 0L
+                                messagesReadInBatch = 0L
 				seekToRandomPosition(consumer, topicPartitions, beginningOffsets, endOffsets)
 			}
 
-      val start = System.currentTimeMillis()
-      // using 1000 instead of 100, because of the random read need more time
-      val records = consumer.poll(1000).asScala
+                        val start = System.currentTimeMillis()
+                        // using 1000 instead of 100, because of the random read need more time
+                        val records = consumer.poll(1000).asScala
 			// update poll record latency
-      latencyHistogram.update(System.currentTimeMillis() - start)
+                        latencyHistogram.update(System.currentTimeMillis() - start)
 
 			currentTimeMillis = System.currentTimeMillis
 			if (records.nonEmpty)
 				lastConsumedTime = currentTimeMillis
 			for (record <- records) {
-        // this is used for random read, but don't have influence on sequence read,
-        // so the count should be equal to `messagesRead` when sequence read.
-        messagesReadInBatch += 1
+                        // this is used for random read, but don't have influence on sequence read,
+                        // so the count should be equal to `messagesRead` when sequence read.
+                        messagesReadInBatch += 1
 				messagesRead += 1
 				if (record.key != null)
 					bytesRead += record.key.size
@@ -169,13 +169,13 @@ object ConsumerPerformance {
         
 				if (currentTimeMillis - lastReportTime >= config.reportingInterval) {
 					if (config.showDetailedStats) {
-            // update metrics
-            val elapsedMs: Double = currentTimeMillis - lastReportTime
-            val recordsRead = messagesRead - lastMessagesRead
-            val mbRead = ((bytesRead - lastBytesRead) * 1.0) /(1024 * 1024)
-            rpsHistogram.update((1000.0 * recordsRead / elapsedMs).toLong)
-            mpsHistogram.update((1000.0 * mbRead / elapsedMs).toLong)
-          }
+                                                // update metrics
+                                                val elapsedMs: Double = currentTimeMillis - lastReportTime
+                                                val recordsRead = messagesRead - lastMessagesRead
+                                                val mbRead = ((bytesRead - lastBytesRead) * 1.0) /(1024 * 1024)
+                                                rpsHistogram.update((1000.0 * recordsRead / elapsedMs).toLong)
+                                                mpsHistogram.update((1000.0 * mbRead / elapsedMs).toLong)
+                                        }
 
 					lastReportTime = currentTimeMillis
 					lastMessagesRead = messagesRead
@@ -184,21 +184,21 @@ object ConsumerPerformance {
 			}
 		}
 
-    // the last batch or the first but ran time less than reportInterval.
-    if (currentTimeMillis - lastReportTime > 0) {
-      if (config.showDetailedStats) {
-        // update metrics
-        val elapsedMs: Double = currentTimeMillis - lastReportTime
-        val recordsRead = messagesRead - lastMessagesRead
-        val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
-        rpsHistogram.update((1000.0 * recordsRead / elapsedMs).toLong)
-        mpsHistogram.update((1000.0 * mbRead / elapsedMs).toLong)
-      }
+                // the last batch or the first but ran time less than reportInterval.
+                if (currentTimeMillis - lastReportTime > 0) {
+                       if (config.showDetailedStats) {
+                               // update metrics
+                               val elapsedMs: Double = currentTimeMillis - lastReportTime
+                               val recordsRead = messagesRead - lastMessagesRead
+                               val mbRead = ((bytesRead - lastBytesRead) * 1.0) / (1024 * 1024)
+                               rpsHistogram.update((1000.0 * recordsRead / elapsedMs).toLong)
+                               mpsHistogram.update((1000.0 * mbRead / elapsedMs).toLong)
+                       }
 
-      lastReportTime = currentTimeMillis
-      lastMessagesRead = messagesRead
-      lastBytesRead = bytesRead
-    }
+                       lastReportTime = currentTimeMillis
+                       lastMessagesRead = messagesRead
+                       lastBytesRead = bytesRead
+                }
 
 		totalMessagesRead.set(messagesRead)
 		totalBytesRead.set(bytesRead)
@@ -250,7 +250,7 @@ object ConsumerPerformance {
 			.defaultsTo(1024 * 1024)
 		val resetBeginningOffsetOpt = parser.accepts("from-latest", "If the consumer does not already have an established " +
 			"offset to consume from, start with the latest message present in the log rather than the earliest message.")
-    val outputDirOpt = parser.accepts("outputDir", "REQUIRED: The report output dir.")
+                val outputDirOpt = parser.accepts("outputDir", "REQUIRED: The report output dir.")
 			.withRequiredArg()
 			.describedAs("outputDir")
 			.ofType(classOf[String])

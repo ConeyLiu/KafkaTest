@@ -17,7 +17,7 @@ import org.apache.spark.streaming.{Seconds, StreamingContext}
 
 
 object Main {
-	def main(args: Array[String]): Unit = {
+  def main(args: Array[String]): Unit = {
     println("Test started !")
 
     var config: StreamingConfig = null
@@ -76,8 +76,6 @@ object Main {
         consumer.subscribe(Collections.singletonList(config.topic))
         val partitionInfos = consumer.partitionsFor(config.topic).asScala
         val topicPartitions = partitionInfos.map(pi => new TopicPartition(config.topic, pi.partition()))
-        // because this test just for read data (already store in Kafka), so the beginning offset and end offset
-        // are fixed.
         val beginningOffsets = consumer.beginningOffsets(topicPartitions.asJava)
 
         kafkaData.foreachRDD { rdd =>
@@ -104,8 +102,9 @@ object Main {
           ).map(record => (record.key(), record.value()))
 
           val kvRdd = rdd.map(record => (record.key(), record.value()))
-          val unionRDD = randomRdd.union(kvRdd)
-          val count = unionRDD.count()
+          //val unionRDD = randomRdd.union(kvRdd)
+          //val count = unionRDD.count()
+          val count = kvRdd.count()
 
           if (count != 0) {
             val first = kvRdd.first()
@@ -124,6 +123,9 @@ object Main {
             val mbRead = (count * sizePerRecord) / (1024 * 1024)
             rpsHistogram.update(count / config.batchInterval.toInt)
             mpsHistogram.update(mbRead / config.batchInterval.toInt)
+
+            // random read
+            randomRdd.count()
           }
         }
       }
