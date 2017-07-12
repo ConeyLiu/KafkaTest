@@ -218,7 +218,7 @@ object Main {
       ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG -> classOf[ByteArrayDeserializer],
       ConsumerConfig.CHECK_CRCS_CONFIG -> (false: jBoolean),
       ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG -> (false: jBoolean),
-      ConsumerConfig.AUTO_OFFSET_RESET_CONFIG -> "latest"
+      ConsumerConfig.AUTO_OFFSET_RESET_CONFIG -> "earliest"
     )
   }
 }
