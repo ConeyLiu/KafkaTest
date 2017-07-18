@@ -3,7 +3,7 @@
 CURRENT_DIR=$(dirname "$0")
 SPARK_HOME=/home/xianyang/opt/spark
 ${SPARK_HOME}/bin/spark-submit \
-          --class com.intel.Main               \
+          --class com.intel.spark.KafkaPerformanceTest  \
           --master         yarn                \
           --deploy-mode    client              \
           --executor-memory 30G               \

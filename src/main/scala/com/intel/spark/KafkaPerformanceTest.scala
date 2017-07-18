@@ -1,22 +1,23 @@
-package com.intel
+package com.intel.spark
 
 import java.io.IOException
-import java.util.{Collections, Properties, Random}
 import java.lang.{Boolean => jBoolean}
+import java.util.{Collections, Random}
 
 import com.codahale.metrics.{Counter, Histogram}
+import com.intel.producer.MetricsUtil
 import joptsimple.OptionParser
 import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
 import org.apache.kafka.common.TopicPartition
-
-import scala.collection.JavaConverters._
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.spark.SparkConf
 import org.apache.spark.streaming.kafka010._
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 
+import scala.collection.JavaConverters._
 
-object Main {
+
+object KafkaPerformanceTest {
   def main(args: Array[String]): Unit = {
     println("Test started !")
 
@@ -30,6 +31,15 @@ object Main {
       config = new StreamingConfig(args)
       val batchInterval = config.batchInterval.toInt
       val conf = new SparkConf().setAppName("Kafka Test " + System.currentTimeMillis())
+
+      // if 'AUTO_OFFSET_RESET_CONFIG' set 'earliest', we need control read rate,
+      // otherwise Spark Streaming will try reading the range of data from beginning to latest offset
+      // in the first batch. So if the data cached really large, then the later data will be queued,
+      // and also the scheduling time will be larger than processing time.
+      if ("earliest" == config.autoRestOffset) {
+        conf.set("spark.streaming.kafka.maxRatePerPartition", "29960")
+      }
+
       val ssc = new StreamingContext(conf, Seconds(batchInterval))
 
       val topic = config.topic
@@ -181,6 +191,8 @@ object Main {
       .describedAs("gid")
       .defaultsTo("perf-consumer-" + new Random().nextInt(100000))
       .ofType(classOf[String])
+    val offsetRestOpt = parser.accepts("from-latest", "If set, then Streaming will start reading from latest offset," +
+      "otherwise it will read from the earliest offset.")
     val randomReadOpt = parser.accepts("randomRead", "Whether random read the data.")
       .withRequiredArg()
       .describedAs("randomRead")
@@ -210,6 +222,12 @@ object Main {
       ""
     }
 
+    val autoRestOffset = if (options.has(offsetRestOpt)) {
+      "latest"
+    } else {
+      "earliest"
+    }
+
     val props = Map[String, Object](
       ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG -> options.valueOf(bootstrapServersOpt).toString,
       ConsumerConfig.GROUP_ID_CONFIG -> (options.valueOf(groupIdOpt) + whetherRandom),
@@ -218,7 +236,7 @@ object Main {
       ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG -> classOf[ByteArrayDeserializer],
       ConsumerConfig.CHECK_CRCS_CONFIG -> (false: jBoolean),
       ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG -> (false: jBoolean),
-      ConsumerConfig.AUTO_OFFSET_RESET_CONFIG -> "earliest"
+      ConsumerConfig.AUTO_OFFSET_RESET_CONFIG -> autoRestOffset
     )
   }
 }

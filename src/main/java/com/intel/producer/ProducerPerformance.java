@@ -1,4 +1,4 @@
-package com.intel;
+package com.intel.producer;
 
 
 import com.codahale.metrics.Histogram;

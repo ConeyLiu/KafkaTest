@@ -1,25 +1,22 @@
-package com.intel
+package com.intel.consumer
 
+import java.lang.{Long => jLang}
+import java.text.SimpleDateFormat
 import java.util
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
+import java.util.{Collections, Properties, Random}
 
-import scala.collection.JavaConverters._
-import java.util.concurrent.atomic.AtomicLong
-
-import org.apache.log4j.Logger
+import com.codahale.metrics.Histogram
+import com.intel.producer.MetricsUtil
+import kafka.tools.PerfConfig
+import kafka.utils.CommandLineUtils
 import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRebalanceListener, KafkaConsumer}
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
+import org.apache.log4j.Logger
 
-import java.lang.{Long => jLang}
-import java.util.{Collections, Map, Properties, Random}
-import java.text.SimpleDateFormat
-import java.util.concurrent.atomic.AtomicBoolean
-
-import com.codahale.metrics.Histogram
-import kafka.tools.PerfConfig
-import kafka.utils.CommandLineUtils
-
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 /**

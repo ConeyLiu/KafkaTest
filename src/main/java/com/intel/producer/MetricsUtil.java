@@ -1,4 +1,4 @@
-package com.intel;
+package com.intel.producer;
 
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.Histogram;
@@ -8,7 +8,6 @@ import com.codahale.metrics.Snapshot;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.Date;
 import java.util.Random;
 
 

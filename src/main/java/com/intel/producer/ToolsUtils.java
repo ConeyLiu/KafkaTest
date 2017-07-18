@@ -1,4 +1,4 @@
-package com.intel;
+package com.intel.producer;
 
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
