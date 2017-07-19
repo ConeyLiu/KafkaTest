@@ -88,7 +88,7 @@ public class ProducerPerformance {
 
       props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
-      //props.put(ProducerConfig.ACKS_CONFIG, "1");
+      props.put(ProducerConfig.ACKS_CONFIG, "0");
       producer = new KafkaProducer<byte[], byte[]>(props);
 
       MetricRegistry metrics = MetricsUtil.getMetrics();
@@ -166,7 +166,7 @@ public class ProducerPerformance {
     KafkaProducer<byte[], byte[]> producer,
     Histogram recsPerSecMetrics,
     Histogram mbPerSecMetrics,
-    Histogram lantencyMetrics
+    Histogram latencyMetrics
   ) {
 
     Callable<Long> producerThread = new Callable<Long>() {
@@ -187,7 +187,7 @@ public class ProducerPerformance {
           5000,
           recsPerSecMetrics,
           mbPerSecMetrics,
-          lantencyMetrics);
+          latencyMetrics);
         long startMs = System.currentTimeMillis();
 
         ThroughputThrottler throttler = new ThroughputThrottler(throughputLimit, startMs);
