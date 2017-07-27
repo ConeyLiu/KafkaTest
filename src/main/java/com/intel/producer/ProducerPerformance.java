@@ -31,7 +31,6 @@ public class ProducerPerformance {
     long start = System.currentTimeMillis();
 
     ArgumentParser parser = argParser();
-    KafkaProducer<byte[], byte[]> producer = null;
 
     try {
       Namespace res = parser.parseArgs(args);
@@ -41,6 +40,7 @@ public class ProducerPerformance {
       int numProducers = res.getInt("numProducers") == null ? 1 : res.getInt("numProducers");
       long numRecords = res.getLong("numRecords");
       Integer recordSize = res.getInt("recordSize");
+      Integer reportIntervals = res.getInt("reportIntervals") == null ? 3000 : res.getInt("reportIntervals");
       int throughput = res.getInt("throughput");
       List<String> producerProps = res.getList("producerConfig");
       String producerConfig = res.getString("producerConfigFile");
@@ -88,8 +88,7 @@ public class ProducerPerformance {
 
       props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
       props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
-      props.put(ProducerConfig.ACKS_CONFIG, "0");
-      producer = new KafkaProducer<byte[], byte[]>(props);
+      props.put(ProducerConfig.ACKS_CONFIG, "1");
 
       MetricRegistry metrics = MetricsUtil.getMetrics();
       Histogram recordPerSecondMetrics = MetricsUtil.getHistogram("record_per_second", metrics);
@@ -102,15 +101,14 @@ public class ProducerPerformance {
 
       for (int i = 0; i < numProducers; i ++) {
         Callable<Long> callable = getProducerThread(
-          "producer-" + i,
+          props,
           numRecords,
           recordSize,
+          reportIntervals,
           payloadFilePath,
           topicName,
-          shouldPrintMetrics,
           throughput,
           payloadByteList,
-          producer,
           recordPerSecondMetrics,
           sizePerSecondMetrics,
           latencyMetrics
@@ -124,8 +122,6 @@ public class ProducerPerformance {
       for (Future<Long> f : futures) {
         totalRecord += f.get();
       }
-
-      producer.flush();
 
       MetricsUtil.report(
         System.currentTimeMillis() - start,
@@ -146,24 +142,18 @@ public class ProducerPerformance {
         parser.handleError(e);
         System.exit(1);
       }
-    } finally {
-      if (producer != null) {
-        producer.close();
-      }
     }
-
   }
 
   private static Callable<Long> getProducerThread(
-    String threadName,
+    Properties producerConfig,
     long numRecords,
     int recordSize,
+    int reportIntervals,
     String payloadFilePath,
     String topicName,
-    Boolean shouldPrintMetrics,
     int throughputLimit,
     List<byte[]> payloadByteList,
-    KafkaProducer<byte[], byte[]> producer,
     Histogram recsPerSecMetrics,
     Histogram mbPerSecMetrics,
     Histogram latencyMetrics
@@ -171,43 +161,51 @@ public class ProducerPerformance {
 
     Callable<Long> producerThread = new Callable<Long>() {
 
+      KafkaProducer<byte[], byte[]> producer = null;
+
       @Override
       public Long call() throws Exception {
-        byte[] payload = new byte[recordSize];
-        Random random = new Random(0);
+        try {
+          producer = new KafkaProducer<byte[], byte[]>(producerConfig);
+          byte[] payload = new byte[recordSize];
+          Random random = new Random(System.nanoTime());
 
-        for (int i = 0; i < payload.length; ++i) {
-          payload[i] = (byte) (random.nextInt(26) + 65);
-        }
-
-        ProducerRecord<byte[], byte[]> record;
-        Stats stats = new Stats(
-          threadName,
-          numRecords,
-          5000,
-          recsPerSecMetrics,
-          mbPerSecMetrics,
-          latencyMetrics);
-        long startMs = System.currentTimeMillis();
-
-        ThroughputThrottler throttler = new ThroughputThrottler(throughputLimit, startMs);
-        for (int i = 0; i < numRecords; i++) {
-          if (payloadFilePath != null) {
-            payload = payloadByteList.get(random.nextInt(payloadByteList.size()));
+          for (int i = 0; i < payload.length; ++i) {
+            payload[i] = (byte) (random.nextInt(26) + 65);
           }
-          record = new ProducerRecord<>(topicName, payload);
 
-          long sendStartMs = System.currentTimeMillis();
-          Callback cb = stats.nextCompletion(sendStartMs, payload.length, stats);
-          producer.send(record, cb);
+          ProducerRecord<byte[], byte[]> record;
+          Stats stats = new Stats(reportIntervals,
+                                   recsPerSecMetrics,
+                                   mbPerSecMetrics,
+                                   latencyMetrics);
+          long startMs = System.currentTimeMillis();
 
-          if (throttler.shouldThrottle(i, sendStartMs)) {
-            throttler.throttle();
+          ThroughputThrottler throttler = new ThroughputThrottler(throughputLimit, startMs);
+          for (int i = 0; i < numRecords; i++) {
+            if (payloadFilePath != null) {
+              payload = payloadByteList.get(random.nextInt(payloadByteList.size()));
+            }
+            record = new ProducerRecord<>(topicName, payload);
+
+            long sendStartMs = System.currentTimeMillis();
+            Callback cb = stats.nextCompletion(sendStartMs, payload.length, stats);
+            producer.send(record, cb);
+
+            if (throttler.shouldThrottle(i, sendStartMs)) {
+              throttler.throttle();
+            }
+          }
+
+          producer.flush();
+          return stats.getCount();
+        } catch (Exception e) {
+          throw new Exception(e.getMessage());
+        } finally {
+          if (producer != null) {
+            producer.close();
           }
         }
-
-        producer.flush();
-        return stats.getCount();
       }
     };
 
@@ -248,6 +246,14 @@ public class ProducerPerformance {
       .metavar("NUM-RECORDS")
       .dest("numRecords")
       .help("number of messages to produce");
+
+    parser.addArgument("--reportIntervals")
+      .action(store())
+      .required(false)
+      .type(Integer.class)
+      .metavar("REPORT-INTERVALS")
+      .dest("reportIntervals")
+      .help("report intervals(ms)");
 
     payloadOptions.addArgument("--record-size")
       .action(store())
@@ -321,8 +327,6 @@ public class ProducerPerformance {
   }
 
   private static class Stats {
-    private String threadName;
-    private long start;
     private long windowStart;
     private int iteration;
     private long count;
@@ -334,14 +338,10 @@ public class ProducerPerformance {
     private Histogram lantencyMetrics;
     private Boolean firstRecord = true;
 
-    public Stats(String threadName,
-                 long numRecords,
-                 int reportingInterval,
+    public Stats(int reportingInterval,
                  Histogram recsPerSecMetrics,
                  Histogram mbPerSecMetrics,
                  Histogram lantencyMetrics) {
-      this.threadName = threadName;
-      this.start = System.currentTimeMillis();
       this.windowStart = System.currentTimeMillis();
       this.iteration = 0;
       this.windowCount = 0;
